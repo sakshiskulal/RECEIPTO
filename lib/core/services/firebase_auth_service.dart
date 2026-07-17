@@ -1,0 +1,82 @@
+import 'package:firebase_auth/firebase_auth.dart';
+import 'package:google_sign_in/google_sign_in.dart';
+import 'package:flutter_riverpod/flutter_riverpod.dart';
+
+final firebaseAuthServiceProvider = Provider<FirebaseAuthService>((ref) {
+  return FirebaseAuthService();
+});
+
+class FirebaseAuthService {
+  final FirebaseAuth _auth;
+  final GoogleSignIn _googleSignIn;
+
+  FirebaseAuthService({
+    FirebaseAuth? auth,
+    GoogleSignIn? googleSignIn,
+  })  : _auth = auth ?? FirebaseAuth.instance,
+        _googleSignIn = googleSignIn ?? GoogleSignIn.instance;
+
+  // Getter for the current user
+  User? get currentUser => _auth.currentUser;
+
+  // Stream of auth state changes (useful for reactive status changes)
+  Stream<User?> get authStateChanges => _auth.authStateChanges();
+
+  // Sign in with email and password
+  Future<UserCredential> signInWithEmailAndPassword(
+    String email,
+    String password,
+  ) async {
+    return await _auth.signInWithEmailAndPassword(
+      email: email,
+      password: password,
+    );
+  }
+
+  // Sign up/Register with email and password
+  Future<UserCredential> signUpWithEmailAndPassword(
+    String email,
+    String password,
+  ) async {
+    return await _auth.createUserWithEmailAndPassword(
+      email: email,
+      password: password,
+    );
+  }
+
+  // Sign in with Google authentication (google_sign_in v7.x compatible)
+  Future<UserCredential?> signInWithGoogle() async {
+    // Ensure Google Sign-In is initialized (v7.x requirement)
+    await _googleSignIn.initialize();
+
+    // Authenticate (Identity check)
+    final GoogleSignInAccount? googleUser = await _googleSignIn.authenticate();
+    if (googleUser == null) {
+      return null;
+    }
+
+    // Authorize required scopes to obtain the Access Token
+    final List<String> scopes = ['email', 'profile'];
+    final clientAuth = await googleUser.authorizationClient.authorizeScopes(scopes);
+
+    // Create Firebase Auth Credential using both tokens
+    final AuthCredential credential = GoogleAuthProvider.credential(
+      accessToken: clientAuth.accessToken,
+      idToken: googleUser.authentication.idToken,
+    );
+
+    // Sign in to Firebase with the credential
+    return await _auth.signInWithCredential(credential);
+  }
+
+  // Send password reset email
+  Future<void> sendPasswordResetEmail(String email) async {
+    await _auth.sendPasswordResetEmail(email: email);
+  }
+
+  // Sign out from both Firebase and Google accounts
+  Future<void> signOut() async {
+    await _googleSignIn.signOut();
+    await _auth.signOut();
+  }
+}

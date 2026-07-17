@@ -1,0 +1,515 @@
+// ignore_for_file: avoid_print
+import 'dart:io';
+import 'package:flutter/foundation.dart';
+import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:supabase_flutter/supabase_flutter.dart';
+import 'package:path/path.dart' as p;
+import 'package:path_provider/path_provider.dart';
+import 'package:receipto/features/scan/data/services/image_picker_service.dart';
+import 'package:receipto/features/scan/data/services/file_processor_service.dart';
+import 'package:receipto/core/services/storage_service.dart';
+import 'package:receipto/core/services/gemini_service.dart';
+import 'package:receipto/core/services/receipt_database_service.dart';
+import 'package:receipto/core/services/warranty_database_service.dart';
+import 'package:receipto/core/services/notification_service.dart';
+import 'package:receipto/features/scan/domain/models/receipt_model.dart';
+import 'package:receipto/features/warranty/domain/models/warranty_model.dart';
+import 'package:receipto/core/utils/warranty_utils.dart';
+
+final scanRepositoryProvider = Provider<ScanRepository>((ref) {
+  final imagePickerService = ref.watch(imagePickerServiceProvider);
+  final fileProcessorService = ref.watch(fileProcessorServiceProvider);
+  final storageService = ref.watch(storageServiceProvider);
+  final geminiService = ref.watch(geminiServiceProvider);
+  final receiptDatabaseService = ref.watch(receiptDatabaseServiceProvider);
+  final warrantyDatabaseService = ref.watch(warrantyDatabaseServiceProvider);
+  final notificationService = ref.watch(notificationServiceProvider);
+  return ScanRepository(
+    imagePickerService,
+    fileProcessorService,
+    storageService,
+    geminiService,
+    receiptDatabaseService,
+    warrantyDatabaseService,
+    notificationService,
+  );
+});
+
+class ScanRepository {
+  final ImagePickerService _imagePickerService;
+  final FileProcessorService _fileProcessorService;
+  final StorageService _storageService;
+  final GeminiService _geminiService;
+  final ReceiptDatabaseService _receiptDatabaseService;
+  final WarrantyDatabaseService _warrantyDatabaseService;
+  final NotificationService _notificationService;
+
+  ScanRepository(
+    this._imagePickerService,
+    this._fileProcessorService,
+    this._storageService,
+    this._geminiService,
+    this._receiptDatabaseService,
+    this._warrantyDatabaseService,
+    this._notificationService,
+  );
+
+  /// Capture image using camera, perform permissions checks, compression, and return the compressed File.
+  Future<File?> scanFromCamera() async {
+    return await _imagePickerService.pickFromCamera();
+  }
+
+  /// Select image using gallery, perform permissions checks, compression, and return the compressed File.
+  Future<File?> scanFromGallery() async {
+    return await _imagePickerService.pickFromGallery();
+  }
+
+  /// Compress an existing image file using picker compression.
+  Future<File> compressImage(File file) async {
+    return await _imagePickerService.compressImage(file);
+  }
+
+  /// Select file using system file picker
+  Future<File?> selectReceiptFile() async {
+    return await _fileProcessorService.pickReceiptFile();
+  }
+
+  /// Process the selected file (Images, PDFs, Word, Excel, CSV, Text) and extract contents
+  Future<Map<String, dynamic>> processReceiptFile(File file) async {
+    return await _fileProcessorService.processFile(file);
+  }
+
+  /// Upload receipt file to public Supabase bucket
+  Future<String> uploadReceipt({
+    required File image,
+    required String userId,
+  }) async {
+    return await _storageService.uploadReceipt(image: image, userId: userId);
+  }
+
+  /// Save extracted receipt details to Supabase database
+  Future<String> saveReceipt(
+    ReceiptModel receipt, {
+    required String userId,
+    String? imageUrl,
+    String? originalFileName,
+  }) async {
+    return await _receiptDatabaseService.saveReceipt(
+      receipt,
+      userId: userId,
+      imageUrl: imageUrl,
+      originalFileName: originalFileName,
+    );
+  }
+
+  /// Save extracted receipt item details to Supabase database
+  Future<void> saveReceiptItems(
+    String receiptId,
+    List<ReceiptItemModel> items,
+  ) async {
+    await _receiptDatabaseService.saveReceiptItems(receiptId, items);
+  }
+
+  /// Executes the complete universal scanned document pipeline:
+  /// Detect format -> Upload raw file -> Extract & Analyze via Gemini -> Save Receipt metadata & Items.
+  Future<Map<String, dynamic>> processAndSaveReceiptFlow({
+    required File imageFile,
+    required String userId,
+    int? fileSize,
+  }) async {
+    final result = await extractReceiptAndUpload(imageFile: imageFile, userId: userId);
+    final ReceiptModel receipt = result['receipt'] as ReceiptModel;
+    final String publicUrl = result['imageUrl'] as String;
+    final String originalFileName = imageFile.path.split('/').last.split('\\').last;
+
+    final String dbId = await saveExtractedReceiptFlow(
+      receipt,
+      publicUrl,
+      userId,
+      originalFileName: originalFileName,
+      fileSize: fileSize,
+    );
+
+    return {
+      'receipt': receipt,
+      'id': dbId,
+      'imageUrl': publicUrl,
+    };
+  }
+
+  /// Extracts the ReceiptModel from the file and uploads it to storage.
+  Future<Map<String, dynamic>> extractReceiptAndUpload({
+    required File imageFile,
+    required String userId,
+  }) async {
+    final String extension = p.extension(imageFile.path).toLowerCase().replaceAll('.', '');
+
+    // 1. Upload original file to Supabase Storage
+    final String publicUrl = await _storageService.uploadReceiptFile(
+      file: imageFile,
+      userId: userId,
+    );
+
+    ReceiptModel receipt;
+
+    // 2. Format branch
+    if (['jpg', 'jpeg', 'png', 'webp', 'heic'].contains(extension)) {
+      // Image: Analyze directly via Gemini Vision
+      receipt = await _geminiService.analyzeReceipt(imageUrl: publicUrl);
+    } else if (extension == 'pdf') {
+      // PDF: Render each page to image, run OCR, and merge
+      final List<File> pageImages = await _fileProcessorService.convertPdfToImages(imageFile);
+      if (pageImages.isEmpty) {
+        throw Exception('Failed to render pages from PDF file.');
+      }
+      
+      final List<ReceiptModel> pageReceipts = [];
+      for (final img in pageImages) {
+        // Upload temporary page image
+        final String pageUrl = await _storageService.uploadReceipt(image: img, userId: userId);
+        final ReceiptModel pageReceipt = await _geminiService.analyzeReceipt(imageUrl: pageUrl);
+        pageReceipts.add(pageReceipt);
+        
+        // Clean up local temp file
+        try {
+          await img.delete();
+        } catch (_) {}
+      }
+
+      receipt = _mergeReceiptModels(pageReceipts);
+    } else if (['doc', 'docx', 'xls', 'xlsx', 'txt', 'csv'].contains(extension)) {
+      // Documents: Parse text and analyze via Gemini Text
+      final Map<String, dynamic> result = await _fileProcessorService.processFile(imageFile);
+      final String extractedText = result['extractedText'] as String? ?? '';
+      if (extractedText.trim().isEmpty) {
+        throw Exception('Failed to extract text contents from $extension document.');
+      }
+      if (extractedText == 'This document format is not supported') {
+        throw Exception('This document format is not supported');
+      }
+      receipt = await _geminiService.analyzeReceiptText(text: extractedText);
+    } else {
+      throw Exception('Unsupported file format: .$extension');
+    }
+
+    // Validation checks
+    if (receipt.merchantName == null || receipt.merchantName!.trim().isEmpty) {
+      throw Exception('Gemini extraction failed: Merchant name was not identified.');
+    }
+    if (receipt.total != null && receipt.total! <= 0.0) {
+      throw Exception('Gemini extraction failed: Total amount must be greater than zero.');
+    }
+
+    return {
+      'receipt': receipt,
+      'imageUrl': publicUrl,
+    };
+  }
+
+  /// Saves receipt details and schedules automatic warranties.
+  Future<String> saveExtractedReceiptFlow(
+    ReceiptModel receipt,
+    String publicUrl,
+    String userId, {
+    String? originalFileName,
+    int? fileSize,
+  }) async {
+    // 1. Save receipt meta to receipts table
+    final String dbId = await _receiptDatabaseService.saveReceipt(
+      receipt,
+      userId: userId,
+      imageUrl: publicUrl,
+      originalFileName: originalFileName,
+      fileSize: fileSize,
+    );
+
+    // 2. Save individual items
+    await _receiptDatabaseService.saveReceiptItems(dbId, receipt.items);
+
+    // 3. Automatic Warranty processing
+    for (final item in receipt.items) {
+      if (item.warrantyAvailable == true) {
+        final productName = item.name;
+        final merchantName = receipt.merchantName ?? 'Unknown Merchant';
+        final purchaseDate = receipt.date ?? DateTime.now().toString().split(' ').first;
+        final warrantyPeriod = item.warrantyPeriod ?? 12;
+        final warrantyUnit = item.warrantyUnit ?? 'months';
+        
+        final expiryDate = WarrantyUtils.calculateExpiryDate(purchaseDate, warrantyPeriod, warrantyUnit);
+        final status = WarrantyUtils.calculateStatus(expiryDate);
+
+        if (kDebugMode) {
+          print('=== Warranty detected ===');
+          print('Product: $productName, Period: $warrantyPeriod $warrantyUnit');
+        }
+
+        final warranty = WarrantyModel(
+          userId: userId,
+          receiptId: dbId,
+          productName: productName,
+          merchantName: merchantName,
+          invoiceNumber: receipt.invoiceNumber,
+          purchaseDate: purchaseDate,
+          warrantyPeriod: warrantyPeriod,
+          warrantyUnit: warrantyUnit,
+          expiryDate: expiryDate,
+          imageUrl: publicUrl,
+          status: status,
+          brand: item.brand,
+          model: item.model,
+          serialNumber: item.serialNumber,
+        );
+
+        if (kDebugMode) {
+          print('=== Warranty expiry calculated ===');
+          print('Expiry: $expiryDate, Status: $status');
+        }
+
+        final warrantyId = await _warrantyDatabaseService.saveWarranty(warranty);
+
+        if (kDebugMode) print('=== Warranty inserted: $warrantyId ===');
+      }
+    }
+
+    return dbId;
+  }
+
+  /// Deletes a receipt and all cascaded child relations (items, warranties, notifications, files).
+  Future<void> deleteReceiptCascade({
+    required String receiptId,
+    required String? imageUrl,
+  }) async {
+    if (kDebugMode) print('Replacing receipt - Deleting old record: $receiptId');
+    final client = Supabase.instance.client;
+
+    // 1. Delete storage file if URL exists
+    if (imageUrl != null && imageUrl.isNotEmpty) {
+      await _storageService.deleteReceiptFileByUrl(imageUrl);
+    }
+
+    final intId = int.tryParse(receiptId) ?? receiptId;
+
+    // 2. Delete warranties linked to this receipt
+    try {
+      await client.from('warranties').delete().eq('receipt_id', intId);
+    } catch (e) {
+      if (kDebugMode) print('Error deleting warranties linked to receipt: $e');
+    }
+
+    // 4. Delete items linked to this receipt
+    try {
+      await client.from('receipt_items').delete().eq('receipt_id', intId);
+    } catch (e) {
+      if (kDebugMode) print('Error deleting items linked to receipt: $e');
+    }
+
+    // 5. Delete receipt record itself
+    try {
+      await client.from('receipts').delete().eq('id', intId);
+    } catch (e) {
+      if (kDebugMode) print('Error deleting receipt record: $e');
+    }
+  }
+
+  ReceiptModel _mergeReceiptModels(List<ReceiptModel> receipts) {
+    if (receipts.isEmpty) {
+      return ReceiptModel(items: []);
+    }
+    if (receipts.length == 1) return receipts.first;
+
+    String? merchantName;
+    String? invoiceNumber;
+    String? date;
+    String? time;
+    String? gstNumber;
+    String? currency;
+    double subtotal = 0.0;
+    double tax = 0.0;
+    double discount = 0.0;
+    double total = 0.0;
+    String? paymentMethod;
+    String? category;
+    String? merchantAddress;
+    String? merchantPhone;
+    final List<ReceiptItemModel> items = [];
+
+    for (final r in receipts) {
+      merchantName ??= r.merchantName;
+      invoiceNumber ??= r.invoiceNumber;
+      date ??= r.date;
+      time ??= r.time;
+      gstNumber ??= r.gstNumber;
+      currency ??= r.currency;
+      paymentMethod ??= r.paymentMethod;
+      category ??= r.category;
+      merchantAddress ??= r.merchantAddress;
+      merchantPhone ??= r.merchantPhone;
+      
+      items.addAll(r.items);
+      subtotal += r.subtotal ?? 0.0;
+      tax += r.tax ?? 0.0;
+      discount += r.discount ?? 0.0;
+      if ((r.total ?? 0.0) > total) {
+        total = r.total!;
+      }
+    }
+
+    if (total == 0.0) {
+      total = subtotal + tax - discount;
+    }
+
+    return ReceiptModel(
+      merchantName: merchantName,
+      invoiceNumber: invoiceNumber,
+      date: date,
+      time: time,
+      gstNumber: gstNumber,
+      currency: currency,
+      subtotal: subtotal > 0 ? subtotal : null,
+      tax: tax > 0 ? tax : null,
+      discount: discount > 0 ? discount : null,
+      total: total > 0 ? total : null,
+      paymentMethod: paymentMethod,
+      category: category,
+      merchantAddress: merchantAddress,
+      merchantPhone: merchantPhone,
+      items: items,
+    );
+  }
+
+  /// Soft deletes a receipt record by updating is_deleted to true and deleted_at to current timestamp.
+  Future<void> softDeleteReceipt(String receiptId) async {
+    await _receiptDatabaseService.softDeleteReceipt(receiptId);
+  }
+
+  /// Restores a soft-deleted receipt record by setting is_deleted to false and deleted_at to null.
+  Future<void> restoreReceipt(String receiptId) async {
+    await _receiptDatabaseService.restoreReceipt(receiptId);
+  }
+
+  /// Permanently deletes a receipt and all related data (items, warranties, files, local reminders).
+  /// Performs transactional rollback in case database deletes fail.
+  Future<void> permanentDeleteReceipt({
+    required String receiptId,
+    required String? imageUrl,
+  }) async {
+    final client = Supabase.instance.client;
+    final intId = int.tryParse(receiptId) ?? receiptId;
+
+    // 1. Fetch all existing records to support rollback
+    Map<String, dynamic>? receiptData;
+    List<dynamic> itemsData = [];
+    List<dynamic> warrantiesData = [];
+
+    try {
+      receiptData = await client.from('receipts').select().eq('id', intId).maybeSingle();
+      itemsData = await client.from('receipt_items').select().eq('receipt_id', intId);
+      warrantiesData = await client.from('warranties').select().eq('receipt_id', intId);
+    } catch (e, stackTrace) {
+      print('=== Deletion Backup Fetch Failed ===');
+      print('Receipt ID: $receiptId');
+      print('Exception: $e');
+      print('StackTrace: $stackTrace');
+      throw Exception('Backup fetch failed: $e');
+    }
+
+    // 2. Attempt deletion
+    try {
+      // 1. Cancel scheduled local notifications
+      for (final w in warrantiesData) {
+        final wId = w['id'];
+        if (wId != null) {
+          await _notificationService.cancelNotification(wId.hashCode);
+        }
+      }
+
+      // 2. Delete warranty rows
+      print('Deleting warranties...');
+      if (warrantiesData.isNotEmpty) {
+        try {
+          await client.from('warranties').delete().eq('receipt_id', intId);
+        } catch (e, stackTrace) {
+          print('=== Deletion Failed at warranties ===');
+          print('Receipt ID: $receiptId');
+          print('Table: warranties');
+          print('Exception: $e');
+          print('StackTrace: $stackTrace');
+          throw Exception('Table: warranties. Error: $e');
+        }
+      }
+
+      // 3. Delete receipt items
+      print('Deleting receipt_items...');
+      if (itemsData.isNotEmpty) {
+        try {
+          await client.from('receipt_items').delete().eq('receipt_id', intId);
+        } catch (e, stackTrace) {
+          print('=== Deletion Failed at receipt_items ===');
+          print('Receipt ID: $receiptId');
+          print('Table: receipt_items');
+          print('Exception: $e');
+          print('StackTrace: $stackTrace');
+          throw Exception('Table: receipt_items. Error: $e');
+        }
+      }
+
+      // 4. Delete receipt image from Supabase Storage
+      print('Deleting storage image...');
+      if (imageUrl != null && imageUrl.isNotEmpty) {
+        try {
+          await _storageService.deleteReceiptFileByUrl(imageUrl);
+        } catch (e, stackTrace) {
+          print('=== Deletion Failed at storage ===');
+          print('Receipt ID: $receiptId');
+          print('Operation: storage image deletion');
+          print('Exception: $e');
+          print('StackTrace: $stackTrace');
+          throw Exception('Operation: storage image deletion. Error: $e');
+        }
+      }
+
+      // 5. Delete receipt row
+      print('Deleting receipt...');
+      if (receiptData != null) {
+        try {
+          await client.from('receipts').delete().eq('id', intId);
+        } catch (e, stackTrace) {
+          print('=== Deletion Failed at receipts ===');
+          print('Receipt ID: $receiptId');
+          print('Table: receipts');
+          print('Exception: $e');
+          print('StackTrace: $stackTrace');
+          throw Exception('Table: receipts. Error: $e');
+        }
+      }
+    } catch (e) {
+      if (kDebugMode) print('Deletion failed, attempting rollback: $e');
+      // Rollback: Re-insert in reverse order
+      try {
+        if (receiptData != null) {
+          await client.from('receipts').insert(receiptData);
+        }
+        if (itemsData.isNotEmpty) {
+          await client.from('receipt_items').insert(itemsData);
+        }
+        if (warrantiesData.isNotEmpty) {
+          await client.from('warranties').insert(warrantiesData);
+        }
+      } catch (rollbackErr) {
+        if (kDebugMode) print('Rollback failed: $rollbackErr');
+      }
+      rethrow;
+    }
+
+    // 6. Clean up temporary/cached local image files if any
+    try {
+      final tempDir = await getTemporaryDirectory();
+      final files = tempDir.listSync();
+      for (final file in files) {
+        if (file is File && (file.path.contains(receiptId) || file.path.contains('storage_compressed'))) {
+          await file.delete();
+        }
+      }
+    } catch (_) {}
+  }
+}

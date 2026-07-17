@@ -1,0 +1,430 @@
+import 'dart:io';
+import 'package:flutter/foundation.dart';
+import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:receipto/features/scan/data/repositories/scan_repository.dart';
+import 'package:receipto/features/scan/domain/models/receipt_model.dart';
+import 'package:receipto/core/services/receipt_database_service.dart';
+import 'package:receipto/features/warranty/presentation/providers/warranty_provider.dart';
+import 'package:receipto/features/notifications/presentation/providers/notification_provider.dart';
+
+class ScanState {
+  final File? selectedImage;
+  final String? selectedFilePath;
+  final String? selectedFileName;
+  final String? selectedFileType;
+  final String? extractedContent;
+  final bool isLoading;
+  final String? errorMessage;
+  
+  // Preview state parameters
+  final File? capturedImage;
+  final bool isProcessing;
+  final bool isAccepted;
+  final String? uploadedUrl;
+  
+  // Gemini receipt analysis model
+  final ReceiptModel? extractedReceipt;
+  
+  // Supabase Database receipt ID
+  final String? savedReceiptId;
+
+  const ScanState({
+    this.selectedImage,
+    this.selectedFilePath,
+    this.selectedFileName,
+    this.selectedFileType,
+    this.extractedContent,
+    this.isLoading = false,
+    this.errorMessage,
+    this.capturedImage,
+    this.isProcessing = false,
+    this.isAccepted = false,
+    this.uploadedUrl,
+    this.extractedReceipt,
+    this.savedReceiptId,
+  });
+
+  ScanState copyWith({
+    File? selectedImage,
+    String? selectedFilePath,
+    String? selectedFileName,
+    String? selectedFileType,
+    String? extractedContent,
+    bool? isLoading,
+    String? errorMessage,
+    File? capturedImage,
+    bool? isProcessing,
+    bool? isAccepted,
+    String? uploadedUrl,
+    ReceiptModel? extractedReceipt,
+    String? savedReceiptId,
+    bool clearCapturedImage = false,
+    bool clearAll = false,
+  }) {
+    if (clearAll) {
+      return const ScanState();
+    }
+    return ScanState(
+      selectedImage: selectedImage ?? this.selectedImage,
+      selectedFilePath: selectedFilePath ?? this.selectedFilePath,
+      selectedFileName: selectedFileName ?? this.selectedFileName,
+      selectedFileType: selectedFileType ?? this.selectedFileType,
+      extractedContent: extractedContent ?? this.extractedContent,
+      isLoading: isLoading ?? this.isLoading,
+      errorMessage: errorMessage ?? this.errorMessage,
+      capturedImage: clearCapturedImage ? null : (capturedImage ?? this.capturedImage),
+      isProcessing: isProcessing ?? this.isProcessing,
+      isAccepted: isAccepted ?? this.isAccepted,
+      uploadedUrl: uploadedUrl ?? this.uploadedUrl,
+      extractedReceipt: extractedReceipt ?? this.extractedReceipt,
+      savedReceiptId: savedReceiptId ?? this.savedReceiptId,
+    );
+  }
+}
+
+class ScanNotifier extends StateNotifier<ScanState> {
+  final ScanRepository _repository;
+  final Ref _ref;
+
+  ScanNotifier(this._repository, this._ref) : super(const ScanState());
+
+  /// Set the captured image awaiting preview confirmation
+  void setCapturedImage(File file) {
+    state = state.copyWith(
+      capturedImage: file,
+      isAccepted: false,
+      isProcessing: false,
+      errorMessage: null,
+    );
+  }
+
+  /// Reset/delete the captured image awaiting preview
+  void resetCapturedImage() {
+    state = state.copyWith(
+      clearCapturedImage: true,
+      isAccepted: false,
+      isProcessing: false,
+      errorMessage: null,
+    );
+  }
+
+  /// Run the entire AI pipeline: upload image -> run Gemini vision -> save to Supabase database
+  Future<bool> acceptAndProcessReceipt({required String userId}) async {
+    if (state.capturedImage == null) return false;
+    
+    state = state.copyWith(
+      isLoading: true,
+      isProcessing: true,
+      isAccepted: false,
+      errorMessage: null,
+    );
+
+    try {
+      final File file = state.capturedImage!;
+      final int size = await file.length();
+      
+      // Execute the centralized repository workflow:
+      final Map<String, dynamic> result = await _repository.processAndSaveReceiptFlow(
+        imageFile: file,
+        userId: userId,
+        fileSize: size,
+      );
+
+      final ReceiptModel receipt = result['receipt'] as ReceiptModel;
+      final String dbId = result['id'] as String;
+      final String publicUrl = result['imageUrl'] as String;
+
+      final fileResult = await _repository.processReceiptFile(file);
+      
+      state = state.copyWith(
+        selectedImage: fileResult['file'] as File?,
+        selectedFilePath: file.path,
+        selectedFileName: fileResult['name'] as String?,
+        selectedFileType: fileResult['type'] as String?,
+        extractedContent: fileResult['extractedText'] as String?,
+        uploadedUrl: publicUrl,
+        extractedReceipt: receipt,
+        savedReceiptId: dbId,
+        isAccepted: true,
+      );
+
+      // Invalidate the lists provider to trigger dynamic refreshes across Dashboard, Receipts & Analytics
+      _ref.invalidate(dbReceiptsListProvider);
+
+      return true;
+    } catch (e) {
+      state = state.copyWith(
+        isAccepted: false,
+        errorMessage: e.toString().replaceAll('Exception: ', '').replaceAll('HttpException: ', ''),
+      );
+      rethrow;
+    } finally {
+      state = state.copyWith(
+        isLoading: false,
+        isProcessing: false,
+      );
+    }
+  }
+
+  /// Runs ONLY extraction and uploads the file to storage without saving it to database.
+  Future<ReceiptModel?> extractReceiptOnly({required String userId}) async {
+    if (state.capturedImage == null) return null;
+    
+    state = state.copyWith(
+      isLoading: true,
+      isProcessing: true,
+      isAccepted: false,
+      errorMessage: null,
+    );
+
+    try {
+      final File file = state.capturedImage!;
+      
+      final Map<String, dynamic> result = await _repository.extractReceiptAndUpload(
+        imageFile: file,
+        userId: userId,
+      );
+
+      final ReceiptModel receipt = result['receipt'] as ReceiptModel;
+      final String publicUrl = result['imageUrl'] as String;
+
+      final fileResult = await _repository.processReceiptFile(file);
+      
+      state = state.copyWith(
+        selectedImage: fileResult['file'] as File?,
+        selectedFilePath: file.path,
+        selectedFileName: fileResult['name'] as String?,
+        selectedFileType: fileResult['type'] as String?,
+        extractedContent: fileResult['extractedText'] as String?,
+        uploadedUrl: publicUrl,
+        extractedReceipt: receipt,
+        isAccepted: false,
+      );
+
+      return receipt;
+    } catch (e) {
+      state = state.copyWith(
+        isAccepted: false,
+        errorMessage: e.toString().replaceAll('Exception: ', '').replaceAll('HttpException: ', ''),
+      );
+      rethrow;
+    } finally {
+      state = state.copyWith(
+        isLoading: false,
+        isProcessing: false,
+      );
+    }
+  }
+
+  /// Saves the already extracted receipt inside state to the database.
+  Future<bool> saveExtracted({required String userId}) async {
+    final receipt = state.extractedReceipt;
+    final publicUrl = state.uploadedUrl;
+    if (receipt == null || publicUrl == null) return false;
+
+    state = state.copyWith(
+      isLoading: true,
+      isProcessing: true,
+      errorMessage: null,
+    );
+
+    try {
+      int? size;
+      if (state.capturedImage != null) {
+        size = await state.capturedImage!.length();
+      }
+      final dbId = await _repository.saveExtractedReceiptFlow(
+        receipt,
+        publicUrl,
+        userId,
+        originalFileName: state.selectedFileName,
+        fileSize: size,
+      );
+
+      state = state.copyWith(
+        savedReceiptId: dbId,
+        isAccepted: true,
+        isProcessing: false,
+        isLoading: false,
+      );
+
+      if (kDebugMode) print('Saving as new');
+
+      // Invalidate providers to trigger dynamic refreshes across all screens
+      _ref.invalidate(dbReceiptsListProvider);
+      _ref.invalidate(dbWarrantiesProvider);
+      _ref.invalidate(notificationNotifierProvider);
+      return true;
+    } catch (e) {
+      state = state.copyWith(
+        isLoading: false,
+        isProcessing: false,
+        errorMessage: e.toString().replaceAll('Exception: ', '').replaceAll('HttpException: ', ''),
+      );
+      return false;
+    }
+  }
+
+  /// Deletes the old receipt cascade and saves the new receipt.
+  Future<bool> replaceExisting({
+    required String oldReceiptId,
+    required String? oldImageUrl,
+    required String userId,
+  }) async {
+    state = state.copyWith(
+      isLoading: true,
+      isProcessing: true,
+      errorMessage: null,
+    );
+
+    try {
+      if (kDebugMode) print('Replacing receipt');
+      await _repository.deleteReceiptCascade(
+        receiptId: oldReceiptId,
+        imageUrl: oldImageUrl,
+      );
+
+      final success = await saveExtracted(userId: userId);
+      return success;
+    } catch (e) {
+      state = state.copyWith(
+        isLoading: false,
+        isProcessing: false,
+        errorMessage: e.toString().replaceAll('Exception: ', '').replaceAll('HttpException: ', ''),
+      );
+      return false;
+    }
+  }
+
+  /// Capture image from camera using legacy ImageSource method
+  Future<void> captureImageFromCamera() async {
+    state = state.copyWith(isLoading: true, errorMessage: null);
+    try {
+      final file = await _repository.scanFromCamera();
+      if (file != null) {
+        state = state.copyWith(
+          capturedImage: file,
+          selectedImage: file,
+          selectedFilePath: file.path,
+          selectedFileName: file.path.split('/').last,
+          selectedFileType: 'Image',
+          extractedContent: 'Receipt image captured.',
+          isLoading: false,
+        );
+      } else {
+        state = state.copyWith(isLoading: false);
+      }
+    } catch (e) {
+      state = state.copyWith(
+        isLoading: false,
+        errorMessage: e.toString().replaceAll('Exception: ', '').replaceAll('HttpException: ', ''),
+      );
+    }
+  }
+
+  /// Select image from device gallery using legacy ImageSource method
+  Future<void> selectImageFromGallery() async {
+    state = state.copyWith(isLoading: true, errorMessage: null);
+    try {
+      final file = await _repository.scanFromGallery();
+      if (file != null) {
+        state = state.copyWith(
+          capturedImage: file,
+          selectedImage: file,
+          selectedFilePath: file.path,
+          selectedFileName: file.path.split('/').last,
+          selectedFileType: 'Image',
+          extractedContent: 'Receipt image selected from gallery.',
+          isLoading: false,
+        );
+      } else {
+        state = state.copyWith(isLoading: false);
+      }
+    } catch (e) {
+      state = state.copyWith(
+        isLoading: false,
+        errorMessage: e.toString().replaceAll('Exception: ', '').replaceAll('HttpException: ', ''),
+      );
+    }
+  }
+
+  /// Process raw camera preview frame photo File
+  Future<void> processCapturedImage(File file) async {
+    state = state.copyWith(isLoading: true, errorMessage: null);
+    try {
+      final compressedFile = await _repository.compressImage(file);
+      state = state.copyWith(
+        capturedImage: compressedFile,
+        selectedImage: compressedFile,
+        selectedFilePath: compressedFile.path,
+        selectedFileName: compressedFile.path.split('/').last,
+        selectedFileType: 'Image',
+        extractedContent: 'Camera frame captured and compressed.',
+        isLoading: false,
+      );
+    } catch (e) {
+      state = state.copyWith(
+        isLoading: false,
+        errorMessage: e.toString().replaceAll('Exception: ', '').replaceAll('HttpException: ', ''),
+      );
+    }
+  }
+
+  /// Launch file picker, parse selected document, upload it, and save to Supabase database
+  Future<bool> pickAndProcessFile({required String userId}) async {
+    state = state.copyWith(isLoading: true, errorMessage: null);
+    try {
+      final file = await _repository.selectReceiptFile();
+      if (file == null) {
+        state = state.copyWith(isLoading: false);
+        return false;
+      }
+
+      // Execute the centralized repository workflow:
+      final Map<String, dynamic> result = await _repository.processAndSaveReceiptFlow(
+        imageFile: file,
+        userId: userId,
+      );
+
+      final ReceiptModel receipt = result['receipt'] as ReceiptModel;
+      final String dbId = result['id'] as String;
+      final String publicUrl = result['imageUrl'] as String;
+
+      final fileResult = await _repository.processReceiptFile(file);
+
+      state = state.copyWith(
+        capturedImage: file,
+        selectedImage: fileResult['file'] as File?,
+        selectedFilePath: file.path,
+        selectedFileName: fileResult['name'] as String?,
+        selectedFileType: fileResult['type'] as String?,
+        extractedContent: fileResult['extractedText'] as String? ?? 'No content extracted',
+        uploadedUrl: publicUrl,
+        extractedReceipt: receipt,
+        savedReceiptId: dbId,
+        isLoading: false,
+      );
+
+      // Invalidate the lists provider to trigger dynamic refreshes across Dashboard, Receipts & Analytics
+      _ref.invalidate(dbReceiptsListProvider);
+
+      return true;
+    } catch (e) {
+      state = state.copyWith(
+        isLoading: false,
+        errorMessage: e.toString().replaceAll('Exception: ', '').replaceAll('HttpException: ', ''),
+      );
+      return false;
+    }
+  }
+
+  /// Clear current scan state
+  void clearState() {
+    state = const ScanState();
+  }
+}
+
+final scanProvider = StateNotifierProvider<ScanNotifier, ScanState>((ref) {
+  final repository = ref.watch(scanRepositoryProvider);
+  return ScanNotifier(repository, ref);
+});
