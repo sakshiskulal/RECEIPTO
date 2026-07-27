@@ -15,6 +15,7 @@ import 'package:receipto/features/warranty/presentation/providers/warranty_provi
 import 'package:receipto/features/warranty/domain/models/warranty_model.dart';
 import 'package:receipto/features/notifications/presentation/providers/notification_provider.dart';
 import 'package:receipto/core/utils/warranty_utils.dart';
+import 'package:receipto/core/services/notification_service.dart';
 
 class DashboardScreen extends ConsumerWidget {
   const DashboardScreen({super.key});
@@ -35,6 +36,19 @@ class DashboardScreen extends ConsumerWidget {
   Widget build(BuildContext context, WidgetRef ref) {
     final receiptsAsync = ref.watch(dbReceiptsListProvider);
     final warrantiesAsync = ref.watch(dbWarrantiesProvider);
+
+    // Watch and consume pending notification tap navigation payload
+    final pendingPayload = ref.watch(pendingNotificationPayloadProvider);
+    if (pendingPayload != null && pendingPayload.isNotEmpty) {
+      debugPrint('[DashboardScreen] Pending notification payload detected: $pendingPayload');
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        // Reset provider state to null first to avoid infinite navigation loop
+        ref.read(pendingNotificationPayloadProvider.notifier).state = null;
+        // Retrieve service instance and handle routing with full logging
+        final notiService = ref.read(notificationServiceProvider);
+        notiService.handleNotificationTapPayloadWithRef(pendingPayload, ref, context);
+      });
+    }
 
     double totalSpending = 0.0;
     double totalSaved = 0.0;
@@ -519,11 +533,8 @@ class DashboardScreen extends ConsumerWidget {
                   ),
                   const SizedBox(height: 20),
                   
-                  // Action button outline
                   OutlinedButton(
-                    onPressed: () {
-                      // Trigger optimization action
-                    },
+                    onPressed: () => context.push('/ai-assistant'),
                     style: OutlinedButton.styleFrom(
                       side: BorderSide(color: AppColors.primary.withValues(alpha: 0.3)),
                       shape: RoundedRectangleBorder(
@@ -532,7 +543,7 @@ class DashboardScreen extends ConsumerWidget {
                       padding: const EdgeInsets.symmetric(vertical: 14),
                     ),
                     child: Text(
-                      'Optimize Budget',
+                      'Ask AI Assistant',
                       style: textTheme.labelMd.copyWith(
                         color: AppColors.primary,
                         fontWeight: FontWeight.bold,

@@ -11,10 +11,11 @@ import 'package:receipto/core/services/storage_service.dart';
 import 'package:receipto/core/services/gemini_service.dart';
 import 'package:receipto/core/services/receipt_database_service.dart';
 import 'package:receipto/core/services/warranty_database_service.dart';
-import 'package:receipto/core/services/notification_service.dart';
 import 'package:receipto/features/scan/domain/models/receipt_model.dart';
 import 'package:receipto/features/warranty/domain/models/warranty_model.dart';
 import 'package:receipto/core/utils/warranty_utils.dart';
+import 'package:receipto/features/notifications/data/services/notification_scheduler.dart';
+import 'package:receipto/core/services/ai_categorizer_service.dart';
 
 final scanRepositoryProvider = Provider<ScanRepository>((ref) {
   final imagePickerService = ref.watch(imagePickerServiceProvider);
@@ -23,7 +24,8 @@ final scanRepositoryProvider = Provider<ScanRepository>((ref) {
   final geminiService = ref.watch(geminiServiceProvider);
   final receiptDatabaseService = ref.watch(receiptDatabaseServiceProvider);
   final warrantyDatabaseService = ref.watch(warrantyDatabaseServiceProvider);
-  final notificationService = ref.watch(notificationServiceProvider);
+  final notificationScheduler = ref.watch(notificationSchedulerProvider);
+  final aiCategorizerService = ref.watch(aiCategorizerServiceProvider);
   return ScanRepository(
     imagePickerService,
     fileProcessorService,
@@ -31,7 +33,8 @@ final scanRepositoryProvider = Provider<ScanRepository>((ref) {
     geminiService,
     receiptDatabaseService,
     warrantyDatabaseService,
-    notificationService,
+    notificationScheduler,
+    aiCategorizerService,
   );
 });
 
@@ -42,7 +45,8 @@ class ScanRepository {
   final GeminiService _geminiService;
   final ReceiptDatabaseService _receiptDatabaseService;
   final WarrantyDatabaseService _warrantyDatabaseService;
-  final NotificationService _notificationService;
+  final NotificationScheduler _notificationScheduler;
+  final AICategorizerService _aiCategorizerService;
 
   ScanRepository(
     this._imagePickerService,
@@ -51,7 +55,8 @@ class ScanRepository {
     this._geminiService,
     this._receiptDatabaseService,
     this._warrantyDatabaseService,
-    this._notificationService,
+    this._notificationScheduler,
+    this._aiCategorizerService,
   );
 
   /// Capture image using camera, perform permissions checks, compression, and return the compressed File.
@@ -122,8 +127,10 @@ class ScanRepository {
     final String publicUrl = result['imageUrl'] as String;
     final String originalFileName = imageFile.path.split('/').last.split('\\').last;
 
+    final categorizedReceipt = await _aiCategorizerService.categorize(receipt);
+
     final String dbId = await saveExtractedReceiptFlow(
-      receipt,
+      categorizedReceipt,
       publicUrl,
       userId,
       originalFileName: originalFileName,
@@ -131,7 +138,7 @@ class ScanRepository {
     );
 
     return {
-      'receipt': receipt,
+      'receipt': categorizedReceipt,
       'id': dbId,
       'imageUrl': publicUrl,
     };
@@ -228,20 +235,51 @@ class ScanRepository {
 
     // 3. Automatic Warranty processing
     for (final item in receipt.items) {
-      if (item.warrantyAvailable == true) {
+      final hasExplicitExpiry = item.warrantyExpiry != null && item.warrantyExpiry!.trim().isNotEmpty;
+      final hasWarrantyPeriod = item.warrantyPeriod != null && item.warrantyPeriod! > 0;
+      final isWarrantyAvailable = item.warrantyAvailable == true || hasExplicitExpiry || hasWarrantyPeriod;
+
+      if (isWarrantyAvailable) {
         final productName = item.name;
         final merchantName = receipt.merchantName ?? 'Unknown Merchant';
         final purchaseDate = receipt.date ?? DateTime.now().toString().split(' ').first;
-        final warrantyPeriod = item.warrantyPeriod ?? 12;
-        final warrantyUnit = item.warrantyUnit ?? 'months';
         
-        final expiryDate = WarrantyUtils.calculateExpiryDate(purchaseDate, warrantyPeriod, warrantyUnit);
-        final status = WarrantyUtils.calculateStatus(expiryDate);
+        int warrantyPeriod = item.warrantyPeriod ?? 0;
+        String warrantyUnit = item.warrantyUnit ?? 'months';
+        String expiryDate;
+        String reason = '';
 
-        if (kDebugMode) {
-          print('=== Warranty detected ===');
-          print('Product: $productName, Period: $warrantyPeriod $warrantyUnit');
+        if (hasExplicitExpiry) {
+          // Priority 1: Explicit printed expiry
+          expiryDate = item.warrantyExpiry!;
+          reason = 'Printed expiry date detected. Using printed expiry. Ignoring calculated warranty.';
+        } else if (hasWarrantyPeriod) {
+          // Priority 2: Calculate from duration
+          expiryDate = WarrantyUtils.calculateExpiryDate(purchaseDate, warrantyPeriod, warrantyUnit);
+          reason = 'No printed expiry date. Calculated from warranty period: $warrantyPeriod $warrantyUnit.';
+        } else {
+          // Priority 3: Unknown
+          expiryDate = 'Warranty Unknown';
+          reason = 'Neither printed expiry date nor warranty period exists. Storing Warranty Unknown.';
         }
+
+        // Cross-validation check for conflicts
+        if (hasExplicitExpiry && hasWarrantyPeriod) {
+          final calculated = WarrantyUtils.calculateExpiryDate(purchaseDate, warrantyPeriod, warrantyUnit);
+          if (calculated != expiryDate) {
+            debugPrint('[Warranty Conflict] Product: $productName. Purchase: $purchaseDate, Period: $warrantyPeriod $warrantyUnit -> Calculated: $calculated VS Printed Expiry: $expiryDate. Preference: Always prefer Printed Expiry Date.');
+          }
+        }
+
+        // Debug logging as required
+        debugPrint('Detected Purchase Date: $purchaseDate');
+        debugPrint('Detected Warranty Duration: ${warrantyPeriod > 0 ? "$warrantyPeriod $warrantyUnit" : "None"}');
+        debugPrint('Detected Printed Expiry: ${item.warrantyExpiry ?? "None"}');
+        debugPrint('Calculated Expiry: ${hasWarrantyPeriod ? WarrantyUtils.calculateExpiryDate(purchaseDate, warrantyPeriod, warrantyUnit) : "None"}');
+        debugPrint('Selected Final Expiry: $expiryDate');
+        debugPrint('Reason: $reason');
+
+        final status = expiryDate == 'Warranty Unknown' ? 'ACTIVE' : WarrantyUtils.calculateStatus(expiryDate);
 
         final warranty = WarrantyModel(
           userId: userId,
@@ -261,13 +299,17 @@ class ScanRepository {
         );
 
         if (kDebugMode) {
-          print('=== Warranty expiry calculated ===');
+          print('=== Warranty expiry selected ===');
           print('Expiry: $expiryDate, Status: $status');
         }
 
         final warrantyId = await _warrantyDatabaseService.saveWarranty(warranty);
 
         if (kDebugMode) print('=== Warranty inserted: $warrantyId ===');
+        
+        // Automatically schedule notifications for the newly created warranty
+        debugPrint('Scheduling warranty notifications for product: $productName');
+        await _notificationScheduler.rescheduleWarranty(warranty.copyWith(id: warrantyId));
       }
     }
 
@@ -379,12 +421,42 @@ class ScanRepository {
 
   /// Soft deletes a receipt record by updating is_deleted to true and deleted_at to current timestamp.
   Future<void> softDeleteReceipt(String receiptId) async {
+    debugPrint('Receipt deleted: $receiptId. Cancelling pending notifications...');
     await _receiptDatabaseService.softDeleteReceipt(receiptId);
+    
+    // Fetch and cancel notifications for all warranties associated with this receipt
+    try {
+      final client = Supabase.instance.client;
+      final intId = int.tryParse(receiptId) ?? receiptId;
+      final warrantiesData = await client.from('warranties').select('id').eq('receipt_id', intId);
+      for (final w in warrantiesData) {
+        final wId = w['id']?.toString();
+        if (wId != null) {
+          await _notificationScheduler.cancelWarrantyNotifications(wId);
+        }
+      }
+    } catch (e) {
+      debugPrint('Error cancelling notifications on soft delete: $e');
+    }
   }
 
   /// Restores a soft-deleted receipt record by setting is_deleted to false and deleted_at to null.
   Future<void> restoreReceipt(String receiptId) async {
+    debugPrint('Receipt restored: $receiptId. Rescheduling notifications...');
     await _receiptDatabaseService.restoreReceipt(receiptId);
+    
+    // Fetch and reschedule notifications for all warranties associated with this receipt
+    try {
+      final client = Supabase.instance.client;
+      final intId = int.tryParse(receiptId) ?? receiptId;
+      final warrantiesData = await client.from('warranties').select().eq('receipt_id', intId);
+      for (final w in warrantiesData) {
+        final warranty = WarrantyModel.fromJson(w);
+        await _notificationScheduler.rescheduleWarranty(warranty);
+      }
+    } catch (e) {
+      debugPrint('Error rescheduling notifications on restore: $e');
+    }
   }
 
   /// Permanently deletes a receipt and all related data (items, warranties, files, local reminders).
@@ -419,7 +491,7 @@ class ScanRepository {
       for (final w in warrantiesData) {
         final wId = w['id'];
         if (wId != null) {
-          await _notificationService.cancelNotification(wId.hashCode);
+          await _notificationScheduler.cancelWarrantyNotifications(wId.toString());
         }
       }
 

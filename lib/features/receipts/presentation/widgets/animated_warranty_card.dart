@@ -1,11 +1,13 @@
 import 'package:flutter/material.dart';
+import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:google_fonts/google_fonts.dart';
 import 'package:go_router/go_router.dart';
 import 'package:receipto/core/constants/constants.dart';
 import 'package:receipto/core/utils/warranty_utils.dart';
 import 'package:receipto/features/warranty/domain/models/warranty_model.dart';
+import 'package:receipto/features/notifications/presentation/providers/notification_settings_provider.dart';
 
-class AnimatedWarrantyCard extends StatefulWidget {
+class AnimatedWarrantyCard extends ConsumerStatefulWidget {
   final WarrantyModel warranty;
 
   const AnimatedWarrantyCard({
@@ -14,10 +16,10 @@ class AnimatedWarrantyCard extends StatefulWidget {
   });
 
   @override
-  State<AnimatedWarrantyCard> createState() => _AnimatedWarrantyCardState();
+  ConsumerState<AnimatedWarrantyCard> createState() => _AnimatedWarrantyCardState();
 }
 
-class _AnimatedWarrantyCardState extends State<AnimatedWarrantyCard>
+class _AnimatedWarrantyCardState extends ConsumerState<AnimatedWarrantyCard>
     with SingleTickerProviderStateMixin {
   late AnimationController _controller;
   late Animation<double> _fadeAnimation;
@@ -227,6 +229,13 @@ class _AnimatedWarrantyCardState extends State<AnimatedWarrantyCard>
 
                       const SizedBox(height: 12),
                       Divider(color: Colors.white.withValues(alpha: 0.05), height: 1),
+                      const SizedBox(height: 12),
+
+                      // Warranty Notifications Section
+                      _buildWarrantyNotificationsSection(context, ref, w),
+
+                      const SizedBox(height: 12),
+                      Divider(color: Colors.white.withValues(alpha: 0.05), height: 1),
                       const SizedBox(height: 8),
 
                       // Bottom Right Action Link
@@ -295,6 +304,111 @@ class _AnimatedWarrantyCardState extends State<AnimatedWarrantyCard>
           ),
         ],
       ),
+    );
+  }
+
+  Widget _buildWarrantyNotificationsSection(BuildContext context, WidgetRef ref, WarrantyModel w) {
+    final settings = ref.watch(notificationSettingsProvider);
+    final now = DateTime.now();
+    final date = DateTime.tryParse(w.expiryDate);
+    
+    if (date == null) {
+      return Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text(
+            'WARRANTY NOTIFICATIONS',
+            style: GoogleFonts.inter(
+              color: AppColors.primary,
+              fontSize: 11,
+              fontWeight: FontWeight.bold,
+              letterSpacing: 0.5,
+            ),
+          ),
+          const SizedBox(height: 6),
+          Text(
+            'Not Scheduled',
+            style: GoogleFonts.inter(color: Colors.white30, fontSize: 13),
+          ),
+        ],
+      );
+    }
+
+    final expiryScheduledDate = DateTime(
+      date.year,
+      date.month,
+      date.day,
+      settings.reminderHour,
+      settings.reminderMinute,
+    );
+
+    final daysList = [30, 15, 7, 1, 0];
+    final Map<int, String> labels = {
+      30: '30 Day Scheduled',
+      15: '15 Day Scheduled',
+      7: '7 Day Scheduled',
+      1: '1 Day Scheduled',
+      0: 'Expiry Scheduled',
+    };
+
+    final List<Widget> list = [];
+    bool anyScheduled = false;
+
+    for (final days in daysList) {
+      final isEnabled = settings.notificationsEnabled && (settings.reminderTypes[days] ?? true);
+      final reminderDate = expiryScheduledDate.subtract(Duration(days: days));
+      final isScheduled = isEnabled && reminderDate.isAfter(now);
+
+      list.add(
+        Padding(
+          padding: const EdgeInsets.symmetric(vertical: 2.0),
+          child: Row(
+            children: [
+              Icon(
+                isScheduled ? Icons.check_circle : Icons.radio_button_unchecked,
+                color: isScheduled ? Colors.greenAccent : Colors.white30,
+                size: 14,
+              ),
+              const SizedBox(width: 8),
+              Text(
+                labels[days]!,
+                style: GoogleFonts.inter(
+                  color: isScheduled ? Colors.white : Colors.white30,
+                  fontSize: 12,
+                  fontWeight: isScheduled ? FontWeight.w500 : FontWeight.normal,
+                ),
+              ),
+            ],
+          ),
+        ),
+      );
+
+      if (isScheduled) {
+        anyScheduled = true;
+      }
+    }
+
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Text(
+          'WARRANTY NOTIFICATIONS',
+          style: GoogleFonts.inter(
+            color: AppColors.primary,
+            fontSize: 11,
+            fontWeight: FontWeight.bold,
+            letterSpacing: 0.5,
+          ),
+        ),
+        const SizedBox(height: 6),
+        if (!anyScheduled)
+          Text(
+            'Not Scheduled',
+            style: GoogleFonts.inter(color: Colors.white30, fontSize: 12),
+          )
+        else
+          ...list,
+      ],
     );
   }
 }

@@ -1,7 +1,8 @@
 import 'dart:convert';
-import 'package:flutter/foundation.dart';
+import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 import 'package:receipto/core/services/notification_service.dart';
 import 'package:receipto/core/services/email_service.dart';
 import 'package:receipto/core/services/warranty_database_service.dart';
@@ -26,11 +27,141 @@ class ReminderEngine {
 
   ReminderEngine(this._dbService, this._notificationService, this._emailService, this._notiDbService);
 
+  int calculateNotificationId(String warrantyId, int daysBefore) {
+    return ((warrantyId.hashCode * 31) + daysBefore) & 0x7FFFFFFF;
+  }
+
+  WarrantyModel _applyNotificationFlag(WarrantyModel w, int daysRemaining) {
+    if (daysRemaining <= 30 && daysRemaining > 15) {
+      return w.copyWith(notification30Sent: true);
+    }
+    if (daysRemaining <= 15 && daysRemaining > 7) {
+      return w.copyWith(notification15Sent: true, notification30Sent: true);
+    }
+    if (daysRemaining <= 7 && daysRemaining > 3) {
+      return w.copyWith(notification7Sent: true, notification15Sent: true, notification30Sent: true);
+    }
+    if (daysRemaining <= 3 && daysRemaining > 1) {
+      return w.copyWith(notification3Sent: true, notification7Sent: true, notification15Sent: true, notification30Sent: true);
+    }
+    if (daysRemaining == 1) {
+      return w.copyWith(notification1Sent: true, notification3Sent: true, notification7Sent: true, notification15Sent: true, notification30Sent: true);
+    }
+    if (daysRemaining == 0) {
+      return w.copyWith(notificationTodaySent: true, notification1Sent: true, notification3Sent: true, notification7Sent: true, notification15Sent: true, notification30Sent: true);
+    }
+    if (daysRemaining < 0) {
+      return w.copyWith(
+        notificationExpiredSent: true,
+        notificationTodaySent: true,
+        notification1Sent: true,
+        notification3Sent: true,
+        notification7Sent: true,
+        notification15Sent: true,
+        notification30Sent: true,
+      );
+    }
+    return w;
+  }
+
+  WarrantyModel _applyEmailFlag(WarrantyModel w, int daysRemaining) {
+    if (daysRemaining <= 30 && daysRemaining > 15) {
+      return w.copyWith(email30Sent: true);
+    }
+    if (daysRemaining <= 15 && daysRemaining > 7) {
+      return w.copyWith(email15Sent: true, email30Sent: true);
+    }
+    if (daysRemaining <= 7 && daysRemaining > 3) {
+      return w.copyWith(email7Sent: true, email15Sent: true, email30Sent: true);
+    }
+    if (daysRemaining <= 3 && daysRemaining > 1) {
+      return w.copyWith(email3Sent: true, email7Sent: true, email15Sent: true, email30Sent: true);
+    }
+    if (daysRemaining == 1) {
+      return w.copyWith(email1Sent: true, email3Sent: true, email7Sent: true, email15Sent: true, email30Sent: true);
+    }
+    if (daysRemaining == 0) {
+      return w.copyWith(emailTodaySent: true, email1Sent: true, email3Sent: true, email7Sent: true, email15Sent: true, email30Sent: true);
+    }
+    if (daysRemaining < 0) {
+      return w.copyWith(
+        emailExpiredSent: true,
+        emailTodaySent: true,
+        email1Sent: true,
+        email3Sent: true,
+        email7Sent: true,
+        email15Sent: true,
+        email30Sent: true,
+      );
+    }
+    return w;
+  }
+
   /// Performs warranty alerts scanning for a user.
   Future<void> checkWarrantyReminders(String userId, String? email, String? displayName) async {
-    if (kDebugMode) print('=== Checking warranties... ===');
+    final now = DateTime.now();
+    final today = DateTime(now.year, now.month, now.day);
+
+    print("========== WARRANTY REMINDER ==========");
+    print("Background task started");
+    print("Current Date: $today");
+
+    // Verify Firebase Current User
+    print("Firebase Current User");
+    String firebaseEmail = 'NULL';
+    String firebaseUid = 'NULL';
+    try {
+      final currentUser = FirebaseAuth.instance.currentUser;
+      if (currentUser == null) {
+        print("No logged-in user found.");
+      } else {
+        firebaseEmail = currentUser.email ?? 'NULL';
+        firebaseUid = currentUser.uid;
+        print("UID");
+        print(firebaseUid);
+        print("Email");
+        print(firebaseEmail);
+      }
+    } catch (e) {
+      print("Firebase not initialized in this environment.");
+    }
+
     try {
       final client = Supabase.instance.client;
+      final prefs = await SharedPreferences.getInstance();
+
+      // Recipient Email Resolution Priority Checks (Objective 5)
+      String? resolvedEmail;
+      
+      bool isValidEmail(String em) {
+        final emailRegex = RegExp(r'^[^@]+@[^@]+\.[^@]+$');
+        return emailRegex.hasMatch(em.trim());
+      }
+
+      // Priority 1: Use email explicitly passed into checkWarrantyReminders()
+      if (email != null && email.trim().isNotEmpty && isValidEmail(email)) {
+        resolvedEmail = email.trim();
+      }
+      
+      // Priority 2: If email parameter is null/empty, read last_logged_in_email from SharedPreferences
+      if (resolvedEmail == null) {
+        final cached = prefs.getString('last_logged_in_email');
+        if (cached != null && cached.trim().isNotEmpty && isValidEmail(cached)) {
+          resolvedEmail = cached.trim();
+        }
+      }
+      
+      // Priority 3: If both are unavailable, attempt to recover FirebaseAuth.currentUser
+      if (resolvedEmail == null) {
+        if (firebaseEmail != 'NULL' && firebaseEmail.isNotEmpty && isValidEmail(firebaseEmail)) {
+          resolvedEmail = firebaseEmail;
+        }
+      }
+
+      // Priority 4: Final validation check before declaring resolved recipient
+      final recipientEmail = resolvedEmail ?? '';
+      final emailValid = recipientEmail.isNotEmpty;
+
       // Fetch active receipts
       final activeResponse = await client
           .from('receipts')
@@ -42,104 +173,383 @@ class ReminderEngine {
       final allWarranties = await _dbService.fetchAllWarranties(userId);
       final warranties = allWarranties.where((w) => activeReceiptIds.contains(w.receiptId)).toList();
 
-      if (kDebugMode) print('=== Found ${warranties.length} active warranties ===');
+      print("Fetched ${warranties.length} warranties");
 
-      final recipientEmail = email ?? '';
       final userName = displayName ?? 'User';
 
+      final isNotificationsEnabled = prefs.getBool('warranty_notif_enabled') ?? true;
+      final isEmailEnabled = prefs.getBool('warranty_notif_email_enabled') ?? false;
+
+      final remind30 = prefs.getBool('warranty_notif_30_days') ?? true;
+      final remind15 = prefs.getBool('warranty_notif_15_days') ?? true;
+      final remind7 = prefs.getBool('warranty_notif_7_days') ?? true;
+      final remind1 = prefs.getBool('warranty_notif_1_day') ?? true;
+      final remind0 = prefs.getBool('warranty_notif_on_expiry') ?? true;
+
+      final List<DueReminder> dueNotifications = [];
+      final List<DueReminder> dueEmails = [];
+      
+      // Separate update maps for notification and email flags (Safety Requirement)
+      final Map<String, WarrantyModel> updatedWarrantiesNotif = {};
+      final Map<String, WarrantyModel> updatedWarrantiesEmail = {};
+
       for (final w in warranties) {
-        await processWarranty(w, recipientEmail, userName);
+        final daysRemaining = WarrantyUtils.calculateDaysRemaining(w.expiryDate);
+
+        final isExpired = w.status == 'EXPIRED';
+        bool notifDue = false;
+        String notifReason = "No trigger conditions met";
+
+        // Check local notification triggers
+        if (isNotificationsEnabled) {
+          if (daysRemaining <= 30 && daysRemaining > 15) {
+            if (!w.notification30Sent) {
+              if (remind30) {
+                notifDue = true;
+                notifReason = "30-day push notification due";
+              } else {
+                notifReason = "30-day push notification skipped (disabled in settings)";
+              }
+            } else {
+              notifReason = "30-day push notification already sent";
+            }
+          } else if (daysRemaining <= 15 && daysRemaining > 7) {
+            if (!w.notification15Sent) {
+              if (remind15) {
+                notifDue = true;
+                notifReason = "15-day push notification due";
+              } else {
+                notifReason = "15-day push notification skipped (disabled in settings)";
+              }
+            } else {
+              notifReason = "15-day push notification already sent";
+            }
+          } else if (daysRemaining <= 7 && daysRemaining > 3) {
+            if (!w.notification7Sent) {
+              if (remind7) {
+                notifDue = true;
+                notifReason = "7-day push notification due";
+              } else {
+                notifReason = "7-day push notification skipped (disabled in settings)";
+              }
+            } else {
+              notifReason = "7-day push notification already sent";
+            }
+          } else if (daysRemaining <= 3 && daysRemaining > 1) {
+            if (!w.notification3Sent) {
+              notifDue = true;
+              notifReason = "3-day push notification due";
+            } else {
+              notifReason = "3-day push notification already sent";
+            }
+          } else if (daysRemaining == 1) {
+            if (!w.notification1Sent) {
+              if (remind1) {
+                notifDue = true;
+                notifReason = "1-day push notification due";
+              } else {
+                notifReason = "1-day push notification skipped (disabled in settings)";
+              }
+            } else {
+              notifReason = "1-day push notification already sent";
+            }
+          } else if (daysRemaining == 0) {
+            if (!w.notificationTodaySent) {
+              if (remind0) {
+                notifDue = true;
+                notifReason = "0-day push notification due";
+              } else {
+                notifReason = "0-day push notification skipped (disabled in settings)";
+              }
+            } else {
+              notifReason = "0-day push notification already sent";
+            }
+          } else if (daysRemaining < 0) {
+            if (!w.notificationExpiredSent) {
+              notifDue = true;
+              notifReason = "Expired push notification due";
+            } else {
+              notifReason = "Expired push notification already sent";
+            }
+          }
+        } else {
+          notifReason = "Push notifications globally disabled";
+        }
+
+        bool emailDue = false;
+        String emailReason = "No trigger conditions met";
+
+        // Check email triggers (only if email capability resolved correctly)
+        if (isEmailEnabled) {
+          if (!emailValid) {
+            emailReason = "No valid recipient resolved (Priority 1-3 all failed).";
+          } else {
+            if (daysRemaining <= 30 && daysRemaining > 15) {
+              if (!w.email30Sent) {
+                if (remind30) {
+                  emailDue = true;
+                  emailReason = "30-day email reminder due";
+                } else {
+                  emailReason = "30-day email skipped (disabled in settings)";
+                }
+              } else {
+                emailReason = "30-day email already sent";
+              }
+            } else if (daysRemaining <= 15 && daysRemaining > 7) {
+              if (!w.email15Sent) {
+                if (remind15) {
+                  emailDue = true;
+                  emailReason = "15-day email reminder due";
+                } else {
+                  emailReason = "15-day email skipped (disabled in settings)";
+                }
+              } else {
+                emailReason = "15-day email already sent";
+              }
+            } else if (daysRemaining <= 7 && daysRemaining > 3) {
+              if (!w.email7Sent) {
+                if (remind7) {
+                  emailDue = true;
+                  emailReason = "7-day email reminder due";
+                } else {
+                  emailReason = "7-day email skipped (disabled in settings)";
+                }
+              } else {
+                emailReason = "7-day email already sent";
+              }
+            } else if (daysRemaining <= 3 && daysRemaining > 1) {
+              if (!w.email3Sent) {
+                emailDue = true;
+                emailReason = "3-day email reminder due";
+              } else {
+                emailReason = "3-day email already sent";
+              }
+            } else if (daysRemaining == 1) {
+              if (!w.email1Sent) {
+                if (remind1) {
+                  emailDue = true;
+                  emailReason = "1-day email reminder due";
+                } else {
+                  emailReason = "1-day email skipped (disabled in settings)";
+                }
+              } else {
+                emailReason = "1-day email already sent";
+              }
+            } else if (daysRemaining == 0) {
+              if (!w.emailTodaySent) {
+                if (remind0) {
+                  emailDue = true;
+                  emailReason = "0-day email reminder due";
+                } else {
+                  emailReason = "0-day email skipped (disabled in settings)";
+                }
+              } else {
+                emailReason = "0-day email already sent";
+              }
+            } else if (daysRemaining < 0) {
+              if (!w.emailExpiredSent) {
+                emailDue = true;
+                emailReason = "Expired email reminder due";
+              } else {
+                emailReason = "Expired email already sent";
+              }
+            }
+          }
+        } else {
+          emailReason = "Email reminders globally disabled";
+        }
+
+        final shouldSend = notifDue || emailDue;
+
+        // Print Warranty Reminder Debug details
+        print("Warranty ID");
+        print(w.id ?? 'NULL');
+        print("Product");
+        print(w.productName);
+        print("Expiry Date");
+        print(w.expiryDate);
+        print("Today's Date");
+        print(today);
+        print("Days Remaining");
+        print(daysRemaining);
+        print("Reminder Enabled");
+        print(isNotificationsEnabled);
+        print("Email Enabled");
+        print(isEmailEnabled);
+        print("Recipient Email");
+        print(recipientEmail);
+        print("Should Send");
+        print(shouldSend);
+        print("Reason");
+        print(shouldSend ? (emailDue ? emailReason : notifReason) : "No trigger conditions met");
+
+        if (isExpired && w.notificationExpiredSent && w.emailExpiredSent) {
+          continue;
+        }
+
+        if (shouldSend) {
+          if (notifDue) {
+            dueNotifications.add(DueReminder(w, daysRemaining));
+            updatedWarrantiesNotif[w.id!] = _applyNotificationFlag(
+              updatedWarrantiesNotif[w.id!] ?? w,
+              daysRemaining,
+            );
+          }
+          if (emailDue) {
+            dueEmails.add(DueReminder(w, daysRemaining));
+            updatedWarrantiesEmail[w.id!] = _applyEmailFlag(
+              updatedWarrantiesEmail[w.id!] ?? w,
+              daysRemaining,
+            );
+          }
+        }
       }
+
+      // Process grouped push notifications (group by daysRemaining stage)
+      try {
+        final Map<int, List<DueReminder>> groupedNotifs = {};
+        for (final dn in dueNotifications) {
+          groupedNotifs.putIfAbsent(dn.daysRemaining, () => []);
+          groupedNotifs[dn.daysRemaining]!.add(dn);
+        }
+
+        for (final entry in groupedNotifs.entries) {
+          final stage = entry.key;
+          final list = entry.value;
+
+          if (list.length == 1) {
+            final dn = list.first;
+            final w = dn.warranty;
+            await sendSingleReminder(w, dn.daysRemaining);
+          } else {
+            await sendGroupedReminder(list, stage);
+          }
+        }
+
+        // Persist Notification flags immediately after push dispatches complete
+        if (updatedWarrantiesNotif.isNotEmpty) {
+          for (final updated in updatedWarrantiesNotif.values) {
+            await _dbService.updateWarranty(updated);
+          }
+          print("=== Notification Flags Updated for ${updatedWarrantiesNotif.length} warranties ===");
+        }
+      } catch (e) {
+        print("Push notification dispatch error: $e");
+      }
+
+      // Process grouped email reminders (send ONE combined email summarizing all of them)
+      try {
+        if (dueEmails.isNotEmpty) {
+          dueEmails.sort((a, b) => b.daysRemaining.compareTo(a.daysRemaining));
+
+          final List<Map<String, String>> productsInfo = dueEmails.map((de) {
+            final w = de.warranty;
+            return {
+              'name': w.productName,
+              'merchant': w.merchantName,
+              'purchaseDate': w.purchaseDate,
+              'expiryDate': w.expiryDate,
+              'daysRemaining': de.daysRemaining.toString(),
+              'invoiceNumber': w.invoiceNumber ?? '',
+            };
+          }).toList();
+
+          final cachedEmail = prefs.getString('last_logged_in_email') ?? 'NULL';
+
+          print("SMTP Start");
+          print("Calling sendWarrantyReminderEmail()");
+
+          final warrantyIds = dueEmails.map((de) => de.warranty.id ?? 'NULL').join(', ');
+          final productNames = dueEmails.map((de) => de.warranty.productName).join(', ');
+
+          await _emailService.sendGroupedWarrantyReminderEmail(
+            recipientEmail: recipientEmail,
+            userName: userName,
+            products: productsInfo,
+            loggedUserUid: userId,
+            loggedUserEmail: recipientEmail,
+            warrantyOwnerUid: dueEmails.first.warranty.userId,
+            warrantyOwnerEmail: recipientEmail,
+            warrantyId: warrantyIds,
+            productName: productNames,
+          );
+
+          print("SMTP End");
+          print("SMTP Result");
+          print("SUCCESS");
+          print("Email Sent Successfully");
+          print("Warranty Reminder Email Sent");
+
+          // Save a DB notification record for each item in the email
+          for (final de in dueEmails) {
+            final w = de.warranty;
+            final bodyText = 'Grouped Email Sent: ${w.productName} warranty reminder.';
+            try {
+              await _notiDbService.saveNotification(
+                NotificationModel(
+                  userId: w.userId,
+                  warrantyId: w.id,
+                  receiptId: w.receiptId,
+                  title: 'Email Reminder Sent',
+                  message: bodyText,
+                  type: 'EMAIL',
+                  createdAt: DateTime.now(),
+                ),
+              );
+            } catch (e) {
+              print("DB Notification Save Error: $e");
+            }
+          }
+
+          // Persist Email Flags ONLY upon successful SMTP dispatch! (Flag Safety Requirement)
+          if (updatedWarrantiesEmail.isNotEmpty) {
+            for (final updated in updatedWarrantiesEmail.values) {
+              await _dbService.updateWarranty(updated);
+            }
+            print("=== Email Flags Updated for ${updatedWarrantiesEmail.length} warranties ===");
+            print("Flags Updated");
+            print("YES");
+          }
+
+          // Final verification matching print checks
+          print("Firebase Email");
+          print(firebaseEmail);
+          print("Cached Email");
+          print(cachedEmail);
+          print("Resolved Recipient");
+          print(recipientEmail);
+          print("Message.recipients");
+          print(recipientEmail);
+          print("SMTP Result");
+          print("SUCCESS");
+
+        }
+      } catch (e) {
+        print("SMTP End");
+        print("SMTP Result");
+        print("FAILED");
+        print("Email Failed");
+        print("Email sending failed with error: $e");
+      }
+
     } catch (e) {
-      if (kDebugMode) print('Error checking warranty reminders: $e');
+      print("Global checking execution error: $e");
     }
   }
 
-  /// Evaluates dates, updates flags, and triggers reminders for a single warranty entry.
-  Future<void> processWarranty(WarrantyModel w, String recipientEmail, String userName) async {
-    // Ignore warranties whose status is EXPIRED unless the expired reminder has not yet been sent.
-    final isExpired = w.status == 'EXPIRED';
-    if (isExpired && w.notificationExpiredSent && w.emailExpiredSent) {
-      return;
-    }
-
-    final daysRemaining = WarrantyUtils.calculateDaysRemaining(w.expiryDate);
-    if (kDebugMode) {
-      print('=== Warranty: ${w.productName} ===');
-      print('=== Days Remaining: $daysRemaining ===');
-    }
-
-    bool sendNotificationFlag = false;
-    bool sendEmailFlag = false;
-
-    // Check local notification triggers
-    if (daysRemaining == 30 && !w.notification30Sent) {
-      sendNotificationFlag = true;
-    } else if (daysRemaining == 15 && !w.notification15Sent) {
-      sendNotificationFlag = true;
-    } else if (daysRemaining == 7 && !w.notification7Sent) {
-      sendNotificationFlag = true;
-    } else if (daysRemaining == 3 && !w.notification3Sent) {
-      sendNotificationFlag = true;
-    } else if (daysRemaining == 1 && !w.notification1Sent) {
-      sendNotificationFlag = true;
-    } else if (daysRemaining == 0 && !w.notificationTodaySent) {
-      sendNotificationFlag = true;
-    } else if (daysRemaining < 0 && !w.notificationExpiredSent) {
-      sendNotificationFlag = true;
-    }
-
-    // Check email triggers
-    if (recipientEmail.isNotEmpty) {
-      if (daysRemaining == 30 && !w.email30Sent) {
-        sendEmailFlag = true;
-      } else if (daysRemaining == 15 && !w.email15Sent) {
-        sendEmailFlag = true;
-      } else if (daysRemaining == 7 && !w.email7Sent) {
-        sendEmailFlag = true;
-      } else if (daysRemaining == 3 && !w.email3Sent) {
-        sendEmailFlag = true;
-      } else if (daysRemaining == 1 && !w.email1Sent) {
-        sendEmailFlag = true;
-      } else if (daysRemaining == 0 && !w.emailTodaySent) {
-        sendEmailFlag = true;
-      } else if (daysRemaining < 0 && !w.emailExpiredSent) {
-        sendEmailFlag = true;
-      }
-    }
-
-    if (sendNotificationFlag) {
-      await sendReminder(w, recipientEmail, userName, daysRemaining, 'notification');
-    }
-
-    if (sendEmailFlag) {
-      await sendReminder(w, recipientEmail, userName, daysRemaining, 'email');
-    }
-
-    if (sendNotificationFlag || sendEmailFlag) {
-      await updateReminderFlags(w,
-          updateNotification: sendNotificationFlag,
-          updateEmail: sendEmailFlag,
-          daysRemaining: daysRemaining);
-      if (kDebugMode) print('=== Reminder Completed ===');
-    }
-  }
-
-  /// Sends reminder using the requested platform transport.
-  Future<void> sendReminder(WarrantyModel w, String recipientEmail, String userName,
-      int daysRemaining, String type) async {
+  /// Sends reminder for a single product.
+  Future<void> sendSingleReminder(WarrantyModel w, int daysRemaining) async {
     final isExpired = daysRemaining < 0;
-
     String subjectText = 'Warranty Reminder';
     String bodyText = '';
 
-    if (daysRemaining == 30) {
+    if (daysRemaining <= 30 && daysRemaining > 15) {
       bodyText = 'Your ${w.productName} warranty expires in 30 days.';
-    } else if (daysRemaining == 15) {
+    } else if (daysRemaining <= 15 && daysRemaining > 7) {
       bodyText = 'Only 15 days remaining for your ${w.productName} warranty.';
-    } else if (daysRemaining == 7) {
+    } else if (daysRemaining <= 7 && daysRemaining > 3) {
       bodyText = 'Only one week remaining for your ${w.productName} warranty.';
-    } else if (daysRemaining == 3) {
+    } else if (daysRemaining <= 3 && daysRemaining > 1) {
       bodyText = 'Your warranty expires in 3 days.';
     } else if (daysRemaining == 1) {
       bodyText = 'Your warranty expires tomorrow.';
@@ -151,112 +561,99 @@ class ReminderEngine {
       bodyText = 'Your warranty has expired.';
     }
 
-    if (type == 'notification') {
-      if (kDebugMode) print('=== Sending Notification... ===');
-      final id = w.id.hashCode;
-      final payload = jsonEncode({
-        'warrantyId': w.id,
-        'receiptId': w.receiptId,
-        'productName': w.productName,
-      });
+    final id = calculateNotificationId(w.id ?? '', daysRemaining);
+    final payload = jsonEncode({
+      'receiptId': w.receiptId,
+      'warrantyId': w.id,
+      'productName': w.productName,
+      'isGrouped': false,
+    });
 
-      await _notificationService.showNotification(
-        id: id,
-        title: subjectText,
-        body: bodyText,
-        payload: payload,
+    await _notificationService.showNotification(
+      id: id,
+      title: subjectText,
+      body: bodyText,
+      payload: payload,
+    );
+
+    try {
+      await _notiDbService.saveNotification(
+        NotificationModel(
+          userId: w.userId,
+          warrantyId: w.id,
+          receiptId: w.receiptId,
+          title: subjectText,
+          message: bodyText,
+          type: 'WARRANTY',
+          createdAt: DateTime.now(),
+        ),
       );
+    } catch (e) {
+      print('Error storing warranty notification in DB: $e');
+    }
+  }
 
+  /// Sends grouped reminder.
+  Future<void> sendGroupedReminder(List<DueReminder> list, int stage) async {
+    final count = list.length;
+    final String title = 'Warranty Reminder';
+    final String body;
+
+    if (stage <= 30 && stage > 15) {
+      body = '$count products expire in 30 days. Tap to view details.';
+    } else if (stage <= 15 && stage > 7) {
+      body = '$count products expire in 15 days. Tap to view details.';
+    } else if (stage <= 7 && stage > 3) {
+      body = '$count products expire in one week. Tap to view details.';
+    } else if (stage == 1) {
+      body = '$count products expire tomorrow. Tap to view details.';
+    } else if (stage == 0) {
+      body = '$count products expire today. Tap to view details.';
+    } else {
+      body = '$count products expire in $stage days. Tap to view details.';
+    }
+
+    // Generate deterministically grouped ID using today's yyyymmdd and stage
+    final now = DateTime.now();
+    final yyyymmdd = (now.year * 10000) + (now.month * 100) + now.day;
+    final id = ((yyyymmdd.hashCode * 37) + stage) & 0x7FFFFFFF;
+
+    final payload = jsonEncode({
+      'isGrouped': true,
+      'warrantyIds': list.map((it) => it.warranty.id).toList(),
+      'daysBefore': stage,
+    });
+
+    await _notificationService.showNotification(
+      id: id,
+      title: title,
+      body: body,
+      payload: payload,
+    );
+
+    for (final dn in list) {
+      final w = dn.warranty;
       try {
         await _notiDbService.saveNotification(
           NotificationModel(
             userId: w.userId,
             warrantyId: w.id,
             receiptId: w.receiptId,
-            title: subjectText,
-            message: bodyText,
+            title: title,
+            message: 'Grouped Reminder: ${w.productName} warranty expiration alert.',
             type: 'WARRANTY',
             createdAt: DateTime.now(),
           ),
         );
       } catch (e) {
-        if (kDebugMode) print('Error storing warranty notification in DB: $e');
-      }
-    } else if (type == 'email') {
-      if (kDebugMode) print('=== Sending Email... ===');
-      await _emailService.sendWarrantyReminderEmail(
-        recipientEmail: recipientEmail,
-        userName: userName,
-        productName: w.productName,
-        merchantName: w.merchantName,
-        purchaseDate: w.purchaseDate,
-        expiryDate: w.expiryDate,
-        daysRemaining: daysRemaining.toString(),
-        invoiceNumber: w.invoiceNumber ?? '',
-      );
-
-      try {
-        await _notiDbService.saveNotification(
-          NotificationModel(
-            userId: w.userId,
-            warrantyId: w.id,
-            receiptId: w.receiptId,
-            title: 'Email Reminder Sent',
-            message: 'Email reminder sent: $bodyText',
-            type: 'EMAIL',
-            createdAt: DateTime.now(),
-          ),
-        );
-      } catch (e) {
-        if (kDebugMode) print('Error storing email notification in DB: $e');
+        print('Error storing grouped notification in DB: $e');
       }
     }
   }
+}
 
-  /// Saves updated sent flags back to Supabase database.
-  Future<void> updateReminderFlags(WarrantyModel w,
-      {required bool updateNotification,
-      required bool updateEmail,
-      required int daysRemaining}) async {
-    WarrantyModel updated = w;
-
-    if (updateNotification) {
-      if (daysRemaining == 30) {
-        updated = updated.copyWith(notification30Sent: true);
-      } else if (daysRemaining == 15) {
-        updated = updated.copyWith(notification15Sent: true);
-      } else if (daysRemaining == 7) {
-        updated = updated.copyWith(notification7Sent: true);
-      } else if (daysRemaining == 3) {
-        updated = updated.copyWith(notification3Sent: true);
-      } else if (daysRemaining == 1) {
-        updated = updated.copyWith(notification1Sent: true);
-      } else if (daysRemaining == 0) {
-        updated = updated.copyWith(notificationTodaySent: true);
-      } else if (daysRemaining < 0) {
-        updated = updated.copyWith(notificationExpiredSent: true);
-      }
-    }
-
-    if (updateEmail) {
-      if (daysRemaining == 30) {
-        updated = updated.copyWith(email30Sent: true);
-      } else if (daysRemaining == 15) {
-        updated = updated.copyWith(email15Sent: true);
-      } else if (daysRemaining == 7) {
-        updated = updated.copyWith(email7Sent: true);
-      } else if (daysRemaining == 3) {
-        updated = updated.copyWith(email3Sent: true);
-      } else if (daysRemaining == 1) {
-        updated = updated.copyWith(email1Sent: true);
-      } else if (daysRemaining == 0) {
-        updated = updated.copyWith(emailTodaySent: true);
-      } else if (daysRemaining < 0) {
-        updated = updated.copyWith(emailExpiredSent: true);
-      }
-    }
-
-    await _dbService.updateWarranty(updated);
-    if (kDebugMode) print('=== Flags Updated ===');
-  }
+class DueReminder {
+  final WarrantyModel warranty;
+  final int daysRemaining;
+  DueReminder(this.warranty, this.daysRemaining);
 }

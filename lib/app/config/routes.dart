@@ -15,7 +15,10 @@ import 'package:receipto/features/profile/presentation/screens/profile_screen.da
 import 'package:receipto/features/receipts/presentation/screens/recycle_bin_screen.dart';
 import 'package:receipto/features/warranty/presentation/screens/warranty_details_screen.dart';
 import 'package:receipto/features/warranty/presentation/screens/warranty_tracker_screen.dart';
+import 'package:receipto/features/warranty/presentation/screens/upcoming_warranties_screen.dart';
 import 'package:receipto/features/notifications/presentation/screens/notification_screen.dart';
+import 'package:receipto/features/notifications/presentation/screens/notification_settings_screen.dart';
+import 'package:receipto/features/ai_assistant/presentation/screens/ai_assistant_screen.dart';
 import 'package:receipto/core/services/firebase_auth_service.dart';
 
 final GlobalKey<NavigatorState> _rootNavigatorKey = GlobalKey<NavigatorState>(debugLabel: 'root');
@@ -118,6 +121,9 @@ final routerProvider = Provider<GoRouter>((ref) {
         ),
       ),
       
+
+
+      
       // Login Route with Fade transition
       GoRoute(
         path: '/login',
@@ -153,6 +159,30 @@ final routerProvider = Provider<GoRouter>((ref) {
         pageBuilder: (context, state) => buildPageWithSlideTransition(
           state: state,
           child: const WarrantyTrackerScreen(),
+        ),
+      ),
+
+      // Upcoming Warranty Reminders Route
+      GoRoute(
+        path: '/warranties/upcoming',
+        parentNavigatorKey: _rootNavigatorKey,
+        pageBuilder: (context, state) {
+          final idsString = state.uri.queryParameters['ids'] ?? '';
+          final ids = idsString.split(',').where((id) => id.isNotEmpty).toList();
+          return buildPageWithSlideTransition(
+            state: state,
+            child: UpcomingWarrantiesScreen(warrantyIds: ids),
+          );
+        },
+      ),
+
+      // AI Warranty Assistant Route
+      GoRoute(
+        path: '/ai-assistant',
+        parentNavigatorKey: _rootNavigatorKey,
+        pageBuilder: (context, state) => buildPageWithSlideTransition(
+          state: state,
+          child: const AIAssistantScreen(),
         ),
       ),
       
@@ -259,6 +289,14 @@ final routerProvider = Provider<GoRouter>((ref) {
                     pageBuilder: (context, state) => buildPageWithSlideTransition(
                       state: state,
                       child: const RecycleBinScreen(),
+                    ),
+                  ),
+                  GoRoute(
+                    path: 'notification-settings',
+                    parentNavigatorKey: _rootNavigatorKey,
+                    pageBuilder: (context, state) => buildPageWithSlideTransition(
+                      state: state,
+                      child: const NotificationSettingsScreen(),
                     ),
                   ),
                 ],

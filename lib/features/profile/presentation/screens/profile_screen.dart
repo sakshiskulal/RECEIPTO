@@ -214,6 +214,21 @@ class _ProfileScreenState extends ConsumerState<ProfileScreen> {
                   context.push('/profile/recycle-bin');
                 },
               ),
+              const SizedBox(height: 24),
+
+              // Notification Settings Section
+              _buildSectionHeader(context, 'Notification Settings'),
+              const SizedBox(height: 12),
+
+              _buildActionSetting(
+                title: '🔔 Notification Settings',
+                subtitle: 'Manage warranty reminder preferences',
+                icon: Icons.notifications_none_outlined,
+                iconColor: AppColors.primary,
+                onTap: () {
+                  context.push('/profile/notification-settings');
+                },
+              ),
               const SizedBox(height: 32),
 
               // Logout Action button

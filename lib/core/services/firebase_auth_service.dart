@@ -1,6 +1,7 @@
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:google_sign_in/google_sign_in.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 
 final firebaseAuthServiceProvider = Provider<FirebaseAuthService>((ref) {
   return FirebaseAuthService();
@@ -76,6 +77,11 @@ class FirebaseAuthService {
 
   // Sign out from both Firebase and Google accounts
   Future<void> signOut() async {
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      await prefs.remove('last_logged_in_email');
+      await prefs.remove('last_logged_in_uid');
+    } catch (_) {}
     await _googleSignIn.signOut();
     await _auth.signOut();
   }

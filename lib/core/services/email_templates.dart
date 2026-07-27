@@ -1,4 +1,50 @@
 class EmailTemplates {
+  static Map<String, String> _getBadgeDetails(int days) {
+    if (days < 0) {
+      return {
+        'color': '#EF4444',
+        'bg': '#FEF2F2',
+        'text': 'Expired',
+      };
+    } else if (days == 0) {
+      return {
+        'color': '#DC2626',
+        'bg': '#FEF2F2',
+        'text': 'Expires Today',
+      };
+    } else if (days == 1) {
+      return {
+        'color': '#D97706',
+        'bg': '#FFFBEB',
+        'text': 'Expires Tomorrow',
+      };
+    } else if (days <= 7) {
+      return {
+        'color': '#D97706',
+        'bg': '#FFFBEB',
+        'text': '7 Days Remaining',
+      };
+    } else if (days <= 15) {
+      return {
+        'color': '#2563EB',
+        'bg': '#EFF6FF',
+        'text': '15 Days Remaining',
+      };
+    } else if (days <= 30) {
+      return {
+        'color': '#059669',
+        'bg': '#ECFDF5',
+        'text': '30 Days Remaining',
+      };
+    } else {
+      return {
+        'color': '#059669',
+        'bg': '#ECFDF5',
+        'text': '$days Days Remaining',
+      };
+    }
+  }
+
   static String getWarrantyReminderHtml({
     required String userName,
     required String productName,
@@ -8,6 +54,13 @@ class EmailTemplates {
     required String daysRemaining,
     required String invoiceNumber,
   }) {
+    final days = int.tryParse(daysRemaining) ?? -1;
+    final badge = _getBadgeDetails(days);
+    final badgeColor = badge['color']!;
+    final badgeBg = badge['bg']!;
+    final badgeText = badge['text']!;
+    final invoiceDisplay = invoiceNumber.isNotEmpty ? invoiceNumber : 'N/A';
+
     return '''
 <!DOCTYPE html>
 <html>
@@ -17,97 +70,115 @@ class EmailTemplates {
   <title>Warranty Expiration Reminder</title>
   <style>
     body {
-      font-family: 'Helvetica Neue', Helvetica, Arial, sans-serif;
-      background-color: #F3F4F6;
-      color: #1F2937;
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;
+      background-color: #F8FAFC;
+      color: #0F172A;
       margin: 0;
       padding: 0;
+      -webkit-font-smoothing: antialiased;
     }
     .container {
       max-width: 600px;
-      margin: 20px auto;
+      margin: 40px auto;
       background-color: #FFFFFF;
-      border-radius: 8px;
+      border-radius: 16px;
       overflow: hidden;
-      box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.1), 0 2px 4px -1px rgba(0, 0, 0, 0.06);
+      box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.05), 0 2px 4px -1px rgba(0, 0, 0, 0.03);
+      border: 1px solid #E2E8F0;
     }
     .header {
-      background-color: #1E3A8A;
+      background: linear-gradient(135deg, #1E3A8A 0%, #0F172A 100%);
       color: #FFFFFF;
-      padding: 24px;
+      padding: 36px 24px;
       text-align: center;
     }
     .header h1 {
       margin: 0;
-      font-size: 24px;
-      font-weight: 700;
-      letter-spacing: 0.5px;
+      font-size: 28px;
+      font-weight: 800;
+      letter-spacing: -0.5px;
     }
     .header p {
-      margin: 4px 0 0 0;
-      font-size: 14px;
+      margin: 6px 0 0 0;
+      font-size: 13px;
       opacity: 0.85;
+      font-weight: 500;
     }
     .content {
-      padding: 32px 24px;
+      padding: 36px 32px;
+      background-color: #FFFFFF;
     }
     .greeting {
-      font-size: 18px;
-      font-weight: 600;
+      font-size: 20px;
+      font-weight: 700;
+      color: #0F172A;
       margin-top: 0;
       margin-bottom: 8px;
     }
     .intro {
       font-size: 15px;
-      line-height: 1.5;
-      color: #4B5563;
-      margin-bottom: 24px;
+      line-height: 1.6;
+      color: #475569;
+      margin-bottom: 28px;
     }
     .card {
-      background-color: #EFF6FF;
-      border: 1px solid #BFDBFE;
-      border-radius: 6px;
-      padding: 20px;
-      margin-bottom: 24px;
-    }
-    .card-title {
-      font-size: 16px;
-      font-weight: 700;
-      color: #1E3A8A;
-      margin-top: 0;
-      margin-bottom: 12px;
+      background-color: #FFFFFF;
+      border: 1px solid #E2E8F0;
+      border-radius: 12px;
+      padding: 24px;
+      margin-bottom: 28px;
+      box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.05), 0 2px 4px -1px rgba(0, 0, 0, 0.03);
     }
     .table {
       width: 100%;
       border-collapse: collapse;
     }
     .table td {
-      padding: 8px 0;
+      padding: 10px 0;
       font-size: 14px;
+      border-bottom: 1px solid #F1F5F9;
+    }
+    .table tr:last-child td {
+      border-bottom: none;
+      padding-bottom: 0;
     }
     .table td.label {
-      color: #6B7280;
-      width: 35%;
+      color: #64748B;
       font-weight: 500;
+      text-align: left;
     }
     .table td.value {
-      color: #1F2937;
+      color: #0F172A;
       font-weight: 600;
       text-align: right;
     }
-    .table tr.highlight td.value {
-      color: #EF4444;
+    .btn-container {
+      text-align: center;
+      margin-top: 32px;
+      margin-bottom: 8px;
+    }
+    .btn {
+      display: inline-block;
+      padding: 14px 32px;
+      font-size: 14px;
+      font-weight: 700;
+      color: #FFFFFF !important;
+      background-color: #2563EB;
+      border-radius: 8px;
+      text-decoration: none;
+      box-shadow: 0 4px 6px -1px rgba(37, 99, 235, 0.2);
     }
     .footer {
-      background-color: #F9FAFB;
-      border-top: 1px solid #E5E7EB;
-      padding: 20px;
+      background-color: #F8FAFC;
+      border-top: 1px solid #E2E8F0;
+      padding: 28px;
       text-align: center;
       font-size: 12px;
-      color: #9CA3AF;
+      color: #64748B;
     }
     .footer p {
       margin: 4px 0;
+      line-height: 1.5;
     }
   </style>
 </head>
@@ -115,19 +186,25 @@ class EmailTemplates {
   <div class="container">
     <div class="header">
       <h1>🛡️ Receipto</h1>
-      <p>Your Intelligent Warranty Guard</p>
+      <p>Smart Receipt &amp; Warranty Manager</p>
     </div>
     <div class="content">
-      <p class="greeting">Hello $userName,</p>
-      <p class="intro">This is an automated reminder from Receipto that your product warranty is nearing its expiration. Please find the details below:</p>
+      <h2 class="greeting">Hello $userName,</h2>
+      <p class="intro">This is an automatic warranty reminder from Receipto that your product warranty is nearing its expiration. Please keep your original receipt secure in case you need to file claims.</p>
       
       <div class="card">
-        <div class="card-title">Warranty Protection Summary</div>
-        <table class="table">
+        <table style="width: 100%; margin-bottom: 16px; border-collapse: collapse;">
           <tr>
-            <td class="label">Product Name</td>
-            <td class="value">$productName</td>
+            <td style="vertical-align: middle;">
+              <h3 style="margin: 0; font-size: 18px; color: #0F172A; font-weight: 700;">$productName</h3>
+            </td>
+            <td style="text-align: right; vertical-align: middle;">
+              <span style="display: inline-block; padding: 6px 12px; font-size: 11px; font-weight: 700; color: $badgeColor; background-color: $badgeBg; border-radius: 9999px; text-transform: uppercase; letter-spacing: 0.5px;">$badgeText</span>
+            </td>
           </tr>
+        </table>
+        
+        <table class="table">
           <tr>
             <td class="label">Merchant</td>
             <td class="value">$merchantName</td>
@@ -140,23 +217,21 @@ class EmailTemplates {
             <td class="label">Expiry Date</td>
             <td class="value">$expiryDate</td>
           </tr>
-          <tr class="highlight">
-            <td class="label">Days Remaining</td>
-            <td class="value">$daysRemaining Days</td>
-          </tr>
           <tr>
             <td class="label">Invoice Number</td>
-            <td class="value">${invoiceNumber.isNotEmpty ? invoiceNumber : 'N/A'}</td>
+            <td class="value">$invoiceDisplay</td>
           </tr>
         </table>
       </div>
       
-      <p class="intro">Please keep your original receipt safe in case you need to file replacement claims or contact customer support.</p>
+      <div class="btn-container">
+        <a href="https://receipto.app" class="btn" style="color: #FFFFFF;">Open Receipto</a>
+      </div>
     </div>
     <div class="footer">
-      <p>Thank you for using Receipto,</p>
-      <p><strong>The Receipto Team</strong></p>
-      <p style="margin-top: 12px; font-size: 11px;">This is a system-generated message. Please do not reply directly to this email.</p>
+      <p><strong>Receipto</strong> • Smart Receipt &amp; Warranty Manager</p>
+      <p>Automatic Warranty Reminder</p>
+      <p style="margin-top: 12px; font-size: 11px; color: #94A3B8;">This is a system-generated message. Please do not reply directly to this email.</p>
     </div>
   </div>
 </body>
@@ -174,57 +249,60 @@ class EmailTemplates {
   <title>Receipto SMTP Connection Test</title>
   <style>
     body {
-      font-family: 'Helvetica Neue', Helvetica, Arial, sans-serif;
-      background-color: #F3F4F6;
-      color: #1F2937;
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;
+      background-color: #F8FAFC;
+      color: #0F172A;
       margin: 0;
       padding: 0;
     }
     .container {
       max-width: 600px;
-      margin: 20px auto;
+      margin: 40px auto;
       background-color: #FFFFFF;
-      border-radius: 8px;
+      border-radius: 16px;
       overflow: hidden;
-      box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.1), 0 2px 4px -1px rgba(0, 0, 0, 0.06);
+      box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.05), 0 2px 4px -1px rgba(0, 0, 0, 0.03);
+      border: 1px solid #E2E8F0;
     }
     .header {
-      background-color: #1E3A8A;
+      background: linear-gradient(135deg, #1E3A8A 0%, #0F172A 100%);
       color: #FFFFFF;
-      padding: 24px;
+      padding: 36px 24px;
       text-align: center;
     }
     .header h1 {
       margin: 0;
-      font-size: 24px;
-      font-weight: 700;
+      font-size: 28px;
+      font-weight: 800;
+      letter-spacing: -0.5px;
     }
     .content {
-      padding: 32px 24px;
+      padding: 40px 32px;
       text-align: center;
     }
     .success-icon {
-      font-size: 48px;
-      margin-bottom: 16px;
+      font-size: 54px;
+      margin-bottom: 20px;
     }
     .title {
-      font-size: 20px;
-      font-weight: 700;
-      color: #10B981;
+      font-size: 22px;
+      font-weight: 800;
+      color: #059669;
       margin-bottom: 12px;
     }
     .message {
       font-size: 15px;
       line-height: 1.6;
-      color: #4B5563;
-      margin-bottom: 24px;
+      color: #475569;
+      margin-bottom: 28px;
     }
     .footer {
-      background-color: #F9FAFB;
-      border-top: 1px solid #E5E7EB;
-      padding: 20px;
+      background-color: #F8FAFC;
+      border-top: 1px solid #E2E8F0;
+      padding: 24px;
+      text-align: center;
       font-size: 12px;
-      color: #9CA3AF;
+      color: #64748B;
     }
   </style>
 </head>
@@ -243,8 +321,172 @@ class EmailTemplates {
       </p>
     </div>
     <div class="footer">
-      <p>Thank you,</p>
-      <p><strong>The Receipto Team</strong></p>
+      <p><strong>Receipto</strong> • Smart Receipt &amp; Warranty Manager</p>
+      <p style="margin-top: 4px; font-size: 11px; color: #94A3B8;">This is a system-generated message. Please do not reply directly to this email.</p>
+    </div>
+  </div>
+</body>
+</html>
+''';
+  }
+
+  static String getGroupedWarrantyReminderHtml({
+    required String userName,
+    required List<Map<String, String>> products,
+  }) {
+    final String cardsHtml = products.map((p) {
+      final days = int.tryParse(p['daysRemaining'] ?? '') ?? 0;
+      final badge = _getBadgeDetails(days);
+      final badgeColor = badge['color']!;
+      final badgeBg = badge['bg']!;
+      final badgeText = badge['text']!;
+      final invoice = p['invoiceNumber'] ?? 'N/A';
+      final invoiceDisplay = invoice.isNotEmpty ? invoice : 'N/A';
+
+      return '''
+      <div class="card" style="background-color: #FFFFFF; border: 1px solid #E2E8F0; border-radius: 12px; padding: 24px; margin-bottom: 20px; box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.05), 0 2px 4px -1px rgba(0, 0, 0, 0.03);">
+        <table style="width: 100%; margin-bottom: 16px; border-collapse: collapse;">
+          <tr>
+            <td style="vertical-align: middle;">
+              <h3 style="margin: 0; font-size: 18px; color: #0F172A; font-weight: 700; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;">${p['name']}</h3>
+            </td>
+            <td style="text-align: right; vertical-align: middle;">
+              <span style="display: inline-block; padding: 6px 12px; font-size: 11px; font-weight: 700; color: $badgeColor; background-color: $badgeBg; border-radius: 9999px; text-transform: uppercase; letter-spacing: 0.5px; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;">$badgeText</span>
+            </td>
+          </tr>
+        </table>
+        <table style="width: 100%; border-collapse: collapse;">
+          <tr>
+            <td style="padding: 10px 0; font-size: 14px; border-bottom: 1px solid #F1F5F9; color: #64748B; font-weight: 500; text-align: left;">Merchant</td>
+            <td style="padding: 10px 0; font-size: 14px; border-bottom: 1px solid #F1F5F9; color: #0F172A; text-align: right; font-weight: 600;">${p['merchant']}</td>
+          </tr>
+          <tr>
+            <td style="padding: 10px 0; font-size: 14px; border-bottom: 1px solid #F1F5F9; color: #64748B; font-weight: 500; text-align: left;">Purchase Date</td>
+            <td style="padding: 10px 0; font-size: 14px; border-bottom: 1px solid #F1F5F9; color: #0F172A; text-align: right; font-weight: 600;">${p['purchaseDate']}</td>
+          </tr>
+          <tr>
+            <td style="padding: 10px 0; font-size: 14px; border-bottom: 1px solid #F1F5F9; color: #64748B; font-weight: 500; text-align: left;">Expiry Date</td>
+            <td style="padding: 10px 0; font-size: 14px; border-bottom: 1px solid #F1F5F9; color: #0F172A; text-align: right; font-weight: 600;">${p['expiryDate']}</td>
+          </tr>
+          <tr>
+            <td style="padding: 10px 0; font-size: 14px; color: #64748B; font-weight: 500; text-align: left;">Invoice Number</td>
+            <td style="padding: 10px 0; font-size: 14px; color: #0F172A; text-align: right; font-weight: 600;">$invoiceDisplay</td>
+          </tr>
+        </table>
+      </div>
+      ''';
+    }).join('\n');
+
+    return '''
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Warranty Expiration Reminder</title>
+  <style>
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;
+      background-color: #F8FAFC;
+      color: #0F172A;
+      margin: 0;
+      padding: 0;
+      -webkit-font-smoothing: antialiased;
+    }
+    .container {
+      max-width: 600px;
+      margin: 40px auto;
+      background-color: #FFFFFF;
+      border-radius: 16px;
+      overflow: hidden;
+      box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.05), 0 2px 4px -1px rgba(0, 0, 0, 0.03);
+      border: 1px solid #E2E8F0;
+    }
+    .header {
+      background: linear-gradient(135deg, #1E3A8A 0%, #0F172A 100%);
+      color: #FFFFFF;
+      padding: 36px 24px;
+      text-align: center;
+    }
+    .header h1 {
+      margin: 0;
+      font-size: 28px;
+      font-weight: 800;
+      letter-spacing: -0.5px;
+    }
+    .header p {
+      margin: 6px 0 0 0;
+      font-size: 13px;
+      opacity: 0.85;
+      font-weight: 500;
+    }
+    .content {
+      padding: 36px 32px;
+      background-color: #FFFFFF;
+    }
+    .greeting {
+      font-size: 20px;
+      font-weight: 700;
+      color: #0F172A;
+      margin-top: 0;
+      margin-bottom: 8px;
+    }
+    .intro {
+      font-size: 15px;
+      line-height: 1.6;
+      color: #475569;
+      margin-bottom: 28px;
+    }
+    .btn-container {
+      text-align: center;
+      margin-top: 32px;
+      margin-bottom: 8px;
+    }
+    .btn {
+      display: inline-block;
+      padding: 14px 32px;
+      font-size: 14px;
+      font-weight: 700;
+      color: #FFFFFF !important;
+      background-color: #2563EB;
+      border-radius: 8px;
+      text-decoration: none;
+      box-shadow: 0 4px 6px -1px rgba(37, 99, 235, 0.2);
+    }
+    .footer {
+      background-color: #F8FAFC;
+      border-top: 1px solid #E2E8F0;
+      padding: 28px;
+      text-align: center;
+      font-size: 12px;
+      color: #64748B;
+    }
+    .footer p {
+      margin: 4px 0;
+      line-height: 1.5;
+    }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <div class="header">
+      <h1>🛡️ Receipto</h1>
+      <p>Smart Receipt &amp; Warranty Manager</p>
+    </div>
+    <div class="content">
+      <h2 class="greeting">Hello $userName,</h2>
+      <p class="intro">Here is a summary of your upcoming warranty reminders that need your attention. Please keep your original receipts secure for any replacement or support claims.</p>
+      
+      $cardsHtml
+      
+      <div class="btn-container">
+        <a href="https://receipto.app" class="btn" style="color: #FFFFFF;">Open Receipto</a>
+      </div>
+    </div>
+    <div class="footer">
+      <p><strong>Receipto</strong> • Smart Receipt &amp; Warranty Manager</p>
+      <p>Automatic Warranty Reminder</p>
+      <p style="margin-top: 12px; font-size: 11px; color: #94A3B8;">This is a system-generated message. Please do not reply directly to this email.</p>
     </div>
   </div>
 </body>

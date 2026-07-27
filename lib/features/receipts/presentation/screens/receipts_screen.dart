@@ -29,23 +29,86 @@ class _ReceiptsScreenState extends ConsumerState<ReceiptsScreen> {
 
   final List<String> _categories = [
     'All',
-    'Grocery',
-    'Food',
+    'Electronics',
+    'Groceries',
+    'Food & Dining',
     'Fuel',
     'Shopping',
+    'Fashion',
+    'Furniture',
+    'Home Appliances',
+    'Healthcare',
     'Medical',
-    'Bills',
+    'Pharmacy',
+    'Beauty & Personal Care',
+    'Travel',
+    'Entertainment',
+    'Education',
+    'Utilities',
+    'Office Supplies',
+    'Sports',
+    'Automotive',
+    'Accessories',
+    'Books',
+    'Mobile & Gadgets',
+    'Computers',
+    'Subscription',
+    'Others',
   ];
 
   IconData _getCategoryIcon(String category) {
-    switch (category.toLowerCase()) {
-      case 'grocery': return Icons.shopping_cart;
-      case 'food': return Icons.restaurant;
-      case 'fuel': return Icons.local_gas_station;
-      case 'shopping': return Icons.shopping_bag;
-      case 'medical': return Icons.medical_services;
-      case 'bills': return Icons.bolt;
-      default: return Icons.receipt_long;
+    switch (category.toLowerCase().trim()) {
+      case 'grocery':
+      case 'groceries':
+        return Icons.shopping_cart;
+      case 'food':
+      case 'food & dining':
+        return Icons.restaurant;
+      case 'fuel':
+        return Icons.local_gas_station;
+      case 'shopping':
+        return Icons.shopping_bag;
+      case 'medical':
+      case 'healthcare':
+      case 'pharmacy':
+        return Icons.local_pharmacy;
+      case 'beauty & personal care':
+        return Icons.face;
+      case 'travel':
+        return Icons.flight;
+      case 'entertainment':
+        return Icons.movie;
+      case 'education':
+        return Icons.school;
+      case 'utilities':
+      case 'bills':
+        return Icons.bolt;
+      case 'office supplies':
+        return Icons.edit;
+      case 'sports':
+        return Icons.sports_soccer;
+      case 'automotive':
+        return Icons.directions_car;
+      case 'accessories':
+        return Icons.watch;
+      case 'books':
+        return Icons.book;
+      case 'mobile & gadgets':
+        return Icons.phone_android;
+      case 'computers':
+        return Icons.computer;
+      case 'subscription':
+        return Icons.subscriptions;
+      case 'electronics':
+        return Icons.devices;
+      case 'fashion':
+        return Icons.checkroom;
+      case 'furniture':
+        return Icons.chair;
+      case 'home appliances':
+        return Icons.kitchen;
+      default:
+        return Icons.receipt_long;
     }
   }
 
@@ -207,7 +270,11 @@ class _ReceiptsScreenState extends ConsumerState<ReceiptsScreen> {
     }).toList() ?? [];
 
     final filteredItems = allItems.where((item) {
-      final matchesCategory = _selectedCategory == 'All' || item.category.toLowerCase() == _selectedCategory.toLowerCase();
+      final matchesCategory = _selectedCategory == 'All' || 
+          item.category.toLowerCase() == _selectedCategory.toLowerCase() ||
+          (_selectedCategory.toLowerCase() == 'groceries' && item.category.toLowerCase() == 'grocery') ||
+          (_selectedCategory.toLowerCase() == 'food & dining' && item.category.toLowerCase() == 'food') ||
+          (_selectedCategory.toLowerCase() == 'healthcare' && item.category.toLowerCase() == 'medical');
       
       final receiptWarranties = warranties.where((w) => w.receiptId == item.id).toList();
       final matchesWarrantyProduct = receiptWarranties.any((w) =>

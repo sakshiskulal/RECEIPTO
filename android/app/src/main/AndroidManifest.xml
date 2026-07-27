@@ -1,8 +1,30 @@
 <manifest xmlns:android="http://schemas.android.com/apk/res/android">
+    <!-- Camera and media permissions -->
     <uses-permission android:name="android.permission.CAMERA" />
     <uses-permission android:name="android.permission.READ_MEDIA_IMAGES" />
     <uses-permission android:name="android.permission.READ_EXTERNAL_STORAGE" />
     <uses-permission android:name="android.permission.USE_BIOMETRIC" />
+
+    <!-- ─── Notification permissions ─────────────────────────────────────── -->
+    <!-- Required on Android 13+ (API 33+) to show any notification -->
+    <uses-permission android:name="android.permission.POST_NOTIFICATIONS"/>
+
+    <!-- Required on Android 12+ (API 31-32) for exact alarms via zonedSchedule -->
+    <uses-permission android:name="android.permission.SCHEDULE_EXACT_ALARM" />
+
+    <!-- Required on Android 13+ (API 33+) as an alternative exact alarm permission
+         that does NOT require user confirmation dialog (granted at install) -->
+    <uses-permission android:name="android.permission.USE_EXACT_ALARM" />
+
+    <!-- Required by WorkManager and AlarmManager to survive device reboots -->
+    <uses-permission android:name="android.permission.RECEIVE_BOOT_COMPLETED"/>
+
+    <!-- Required by exactAllowWhileIdle to keep CPU awake when alarm fires -->
+    <uses-permission android:name="android.permission.WAKE_LOCK" />
+
+    <!-- Required by WorkManager for connectivity checks -->
+    <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
+    <!-- ─────────────────────────────────────────────────────────────────── -->
 
     <application
         android:label="receipto"
@@ -35,6 +57,16 @@
         <meta-data
             android:name="flutterEmbedding"
             android:value="2" />
+
+        <receiver android:exported="false" android:name="com.dexterous.flutterlocalnotifications.ScheduledNotificationReceiver" />
+        <receiver android:exported="false" android:name="com.dexterous.flutterlocalnotifications.ScheduledNotificationBootReceiver">
+            <intent-filter>
+                <action android:name="android.intent.action.BOOT_COMPLETED"/>
+                <action android:name="android.intent.action.MY_PACKAGE_REPLACED"/>
+                <action android:name="android.intent.action.QUICKBOOT_POWERON" />
+                <action android:name="com.htc.intent.action.QUICKBOOT_POWERON"/>
+            </intent-filter>
+        </receiver>
     </application>
     <!-- Required to query activities that can process text, see:
          https://developer.android.com/training/package-visibility and

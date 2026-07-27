@@ -33,9 +33,7 @@ class GeminiService {
     required String imageUrl,
     required int retryCount,
   }) async {
-    final startTime = DateTime.now();
     try {
-      // 1. Download image bytes from the public Supabase URL
       final http.Response downloadRes = await http.get(Uri.parse(imageUrl));
       if (downloadRes.statusCode != 200) {
         throw GeminiException(
@@ -46,7 +44,6 @@ class GeminiService {
       final bytes = downloadRes.bodyBytes;
       final String base64Image = base64.encode(bytes);
 
-      // 2. Prepare detailed prompt tailored for Indian Receipts
       const prompt = '''
 You are an expert AI receipt scanner.
 Analyze the provided receipt image and extract the receipt details.
@@ -58,28 +55,45 @@ CRITICAL RULES FOR CURRENCY RESOLUTION:
 - Return INR ("₹") for all Indian merchants.
 - Only return "\$", "€", "£", etc. when the receipt explicitly belongs to another country (e.g., US, Europe, UK).
 
-Carefully extract common Indian receipt structures and formats from superstores, malls, pharmacies, petrol pumps, restaurants, and local markets (e.g. DMart, Reliance Smart, More, Vishal Mart, Big Bazaar, Apollo Pharmacy, MedPlus, Croma, Vijay Sales, Petrol Pumps, Restaurants, Cafes, Grocery Stores, Medical Stores, Shopping Malls, Supermarkets).
+CRITICAL RULES FOR WARRANTY & RETURN EXTRACTION:
+- Distinguish Return/Replacement Windows (e.g., 7 days return, 10 days replacement) from Warranty Periods. Do not confuse them.
+- Never hardcode or assume warranty durations based on merchant names (e.g., do NOT assume Croma, Amazon, Reliance, or Flipkart always implies a 12-month warranty).
+- Receipts can contain multiple products. Extract warranty, brand, return details, category, and serial numbers independently for every product. Do NOT copy one product's warranty terms to other items.
+- Extracted dates (purchase date and expiry dates) must be normalized to standard ISO format (YYYY-MM-DD). Support formats like "19-Jul-2026", "19 July 2026", "19/07/2026", "19 Jul 26", "July 19 2026", etc.
+
+WARRANTY RESOLUTION PRIORITIES:
+- PRIORITY 1: If the receipt explicitly contains a printed expiry/validity date (using labels like: Warranty Expiry, Warranty End, Warranty Valid Till, Warranty Ends, Return / Warranty Expiry Date, Return Expiry, Replacement Until, Return Valid Until, Warranty Until, Valid Until, Expires On, Expiry Date, Expiration Date, End Date), use THAT exact date in "warranty_expiry". Do not calculate, estimate, or infer another date.
+- PRIORITY 2: Only if no expiry date is printed anywhere on the receipt, search for warranty duration keywords (e.g. 12 Months, 24 Months, 6 Months, 2 Years, 1 Year, etc.). Populate "warranty_period" (e.g., 12) and "warranty_unit" (e.g., "months").
+- PRIORITY 3: If neither an explicit printed expiry date nor a warranty period exists on the receipt for an item, set "warranty_available" to false, and set "warranty_period", "warranty_unit", "warranty_expiry", and "return_window" to null. Never assume 12 months, and never invent values.
+
+CONFIDENCE SCORE RULES:
+For key fields ("date", "merchant_name", "payment_method", "invoice_number", and inside each item: "name", "warranty_period", "warranty_expiry"), you must output an AI extraction confidence score between 0.0 and 1.0 (float) based on OCR legibility and textual certainty.
 
 You must return ONLY a single, valid JSON object.
-Do NOT wrap the JSON inside markdown code blocks or backticks (e.g. do NOT use ```json or ```). Return ONLY the raw JSON string.
-If any field is unavailable or not present on the receipt, set it to null. Do NOT output placeholder text like "Unknown", "No Warranty", "N/A", or fake values.
+Do NOT wrap the JSON inside markdown code blocks or backticks. Return ONLY the raw JSON string.
 
 JSON structure:
 {
   "merchant_name": String or null,
   "invoice_number": String or null,
-  "date": String (YYYY-MM-DD format preferred) or null,
+  "date": String (YYYY-MM-DD format) or null,
   "time": String (HH:MM or HH:MM:SS format) or null,
-  "gst_number": String or null (GSTIN number of the merchant),
-  "currency": String ("₹" or other detected currency symbol) or null,
+  "gst_number": String or null,
+  "currency": String ("₹" or other currency symbol) or null,
   "subtotal": double or null,
-  "tax": double or null (GST / SGST / CGST total tax amount),
+  "tax": double or null,
   "discount": double or null,
-  "total": double or null (Grand Total),
-  "payment_method": String or null (e.g. UPI, Cash, Card, Net Banking),
+  "total": double or null,
+  "payment_method": String or null,
   "category": String or null,
   "merchant_address": String or null,
   "merchant_phone": String or null,
+  "confidence_scores": {
+    "merchant_name": float,
+    "invoice_number": float,
+    "date": float,
+    "payment_method": float
+  },
   "items": [
     {
       "name": String,
@@ -89,15 +103,22 @@ JSON structure:
       "brand": String or null,
       "model": String or null,
       "serial_number": String or null,
-      "warranty_available": bool (MUST be true or false. Set to false if not mentioned. Do NOT guess or assume warranty exists. Only set to true if receipt mentions warranty terms),
-      "warranty_period": int or null (warranty length count, e.g. 12, 24, 1),
-      "warranty_unit": String or null (warranty length unit, e.g. "days", "months", "years")
+      "category": String or null,
+      "warranty_available": bool,
+      "warranty_period": int or null,
+      "warranty_unit": String or null,
+      "warranty_expiry": String (YYYY-MM-DD format) or null,
+      "return_window": int or null (return window in days),
+      "confidence_scores": {
+        "name": float,
+        "warranty_period": float,
+        "warranty_expiry": float
+      }
     }
   ]
 }
 ''';
 
-      // 3. Build REST request payload
       final Map<String, dynamic> requestPayload = {
         "contents": [
           {
@@ -118,52 +139,21 @@ JSON structure:
 
       final String requestBody = jsonEncode(requestPayload);
 
-      // 4. Call Google Gemini API endpoint via REST
       final http.Response response = await http.post(
         Uri.parse('$_baseUrl?key=$_apiKey'),
         headers: {'Content-Type': 'application/json'},
         body: requestBody,
       );
-
-      final endTime = DateTime.now();
-      final duration = endTime.difference(startTime);
-
       if (response.statusCode != 200) {
         final geminiExc = GeminiExceptionHandler.handleResponse(response);
-        
-        // Retriable codes check: 429, 500, 503
         final bool isRetriable = [429, 500, 503].contains(response.statusCode);
         if (isRetriable && retryCount > 0) {
           final waitSec = geminiExc.retryAfterSeconds ?? 5;
-          GeminiExceptionHandler.logRequest(
-            endpoint: _baseUrl,
-            statusCode: response.statusCode,
-            errorType: 'Retriable error. Waiting ${waitSec}s before retrying...',
-            retryCount: 1 - retryCount + 1,
-            responseTime: duration,
-          );
           await Future.delayed(Duration(seconds: waitSec));
           return _analyzeReceiptWithRetry(imageUrl: imageUrl, retryCount: retryCount - 1);
         }
-
-        GeminiExceptionHandler.logRequest(
-          endpoint: _baseUrl,
-          statusCode: response.statusCode,
-          errorType: 'API Response Error',
-          retryCount: 1 - retryCount,
-          responseTime: duration,
-        );
         throw geminiExc;
       }
-
-      // Success branch
-      GeminiExceptionHandler.logRequest(
-        endpoint: _baseUrl,
-        statusCode: 200,
-        errorType: 'Success',
-        retryCount: 1 - retryCount,
-        responseTime: duration,
-      );
 
       final Map<String, dynamic> jsonResponse = jsonDecode(response.body) as Map<String, dynamic>;
       final candidates = jsonResponse['candidates'] as List<dynamic>?;
@@ -190,30 +180,12 @@ JSON structure:
       final Map<String, dynamic> jsonMap = jsonDecode(cleanedJson) as Map<String, dynamic>;
       return ReceiptModel.fromJson(jsonMap);
     } catch (e) {
-      final duration = DateTime.now().difference(startTime);
       final mappedExc = GeminiExceptionHandler.handleException(e);
-
-      // Handle standard exceptions retry (Socket/Timeout exceptions are retriable)
       final bool isNetworkErr = e is SocketException || e is TimeoutException;
       if (isNetworkErr && retryCount > 0) {
-        GeminiExceptionHandler.logRequest(
-          endpoint: _baseUrl,
-          statusCode: null,
-          errorType: 'Retriable Network Error: $e. Waiting 5s...',
-          retryCount: 1 - retryCount + 1,
-          responseTime: duration,
-        );
         await Future.delayed(const Duration(seconds: 5));
         return _analyzeReceiptWithRetry(imageUrl: imageUrl, retryCount: retryCount - 1);
       }
-
-      GeminiExceptionHandler.logRequest(
-        endpoint: _baseUrl,
-        statusCode: mappedExc.statusCode,
-        errorType: mappedExc.message,
-        retryCount: 1 - retryCount,
-        responseTime: duration,
-      );
       throw mappedExc;
     }
   }
@@ -229,7 +201,6 @@ JSON structure:
     required String text,
     required int retryCount,
   }) async {
-    final startTime = DateTime.now();
     try {
       const prompt = '''
 You are an expert AI receipt scanner.
@@ -242,26 +213,45 @@ CRITICAL RULES FOR CURRENCY RESOLUTION:
 - Return INR ("₹") for all Indian merchants.
 - Only return "\$", "€", "£", etc. when the receipt explicitly belongs to another country (e.g., US, Europe, UK).
 
+CRITICAL RULES FOR WARRANTY & RETURN EXTRACTION:
+- Distinguish Return/Replacement Windows (e.g., 7 days return, 10 days replacement) from Warranty Periods. Do not confuse them.
+- Never hardcode or assume warranty durations based on merchant names (e.g., do NOT assume Croma, Amazon, Reliance, or Flipkart always implies a 12-month warranty).
+- Receipts can contain multiple products. Extract warranty, brand, return details, category, and serial numbers independently for every product. Do NOT copy one product's warranty terms to other items.
+- Extracted dates (purchase date and expiry dates) must be normalized to standard ISO format (YYYY-MM-DD). Support formats like "19-Jul-2026", "19 July 2026", "19/07/2026", "19 Jul 26", "July 19 2026", etc.
+
+WARRANTY RESOLUTION PRIORITIES:
+- PRIORITY 1: If the receipt explicitly contains a printed expiry/validity date (using labels like: Warranty Expiry, Warranty End, Warranty Valid Till, Warranty Ends, Return / Warranty Expiry Date, Return Expiry, Replacement Until, Return Valid Until, Warranty Until, Valid Until, Expires On, Expiry Date, Expiration Date, End Date), use THAT exact date in "warranty_expiry". Do not calculate, estimate, or infer another date.
+- PRIORITY 2: Only if no expiry date is printed anywhere on the receipt, search for warranty duration keywords (e.g. 12 Months, 24 Months, 6 Months, 2 Years, 1 Year, etc.). Populate "warranty_period" (e.g., 12) and "warranty_unit" (e.g., "months").
+- PRIORITY 3: If neither an explicit printed expiry date nor a warranty period exists on the receipt for an item, set "warranty_available" to false, and set "warranty_period", "warranty_unit", "warranty_expiry", and "return_window" to null. Never assume 12 months, and never invent values.
+
+CONFIDENCE SCORE RULES:
+For key fields ("date", "merchant_name", "payment_method", "invoice_number", and inside each item: "name", "warranty_period", "warranty_expiry"), you must output an AI extraction confidence score between 0.0 and 1.0 (float) based on OCR legibility and textual certainty.
+
 You must return ONLY a single, valid JSON object.
-Do NOT wrap the JSON inside markdown code blocks or backticks (e.g. do NOT use ```json or ```). Return ONLY the raw JSON string.
-If any field is unavailable or not present on the receipt, set it to null. Do NOT output placeholder text like "Unknown", "No Warranty", "N/A", or fake values.
+Do NOT wrap the JSON inside markdown code blocks or backticks. Return ONLY the raw JSON string.
 
 JSON structure:
 {
   "merchant_name": String or null,
   "invoice_number": String or null,
-  "date": String (YYYY-MM-DD format preferred) or null,
+  "date": String (YYYY-MM-DD format) or null,
   "time": String (HH:MM or HH:MM:SS format) or null,
-  "gst_number": String or null (GSTIN number of the merchant),
-  "currency": String ("₹" or other detected currency symbol) or null,
+  "gst_number": String or null,
+  "currency": String ("₹" or other currency symbol) or null,
   "subtotal": double or null,
-  "tax": double or null (GST / SGST / CGST total tax amount),
+  "tax": double or null,
   "discount": double or null,
-  "total": double or null (Grand Total),
-  "payment_method": String or null (e.g. UPI, Cash, Card, Net Banking),
+  "total": double or null,
+  "payment_method": String or null,
   "category": String or null,
   "merchant_address": String or null,
   "merchant_phone": String or null,
+  "confidence_scores": {
+    "merchant_name": float,
+    "invoice_number": float,
+    "date": float,
+    "payment_method": float
+  },
   "items": [
     {
       "name": String,
@@ -271,15 +261,22 @@ JSON structure:
       "brand": String or null,
       "model": String or null,
       "serial_number": String or null,
-      "warranty_available": bool (MUST be true or false. Set to false if not mentioned. Do NOT guess or assume warranty exists. Only set to true if receipt mentions warranty terms),
-      "warranty_period": int or null (warranty length count, e.g. 12, 24, 1),
-      "warranty_unit": String or null (warranty length unit, e.g. "days", "months", "years")
+      "category": String or null,
+      "warranty_available": bool,
+      "warranty_period": int or null,
+      "warranty_unit": String or null,
+      "warranty_expiry": String (YYYY-MM-DD format) or null,
+      "return_window": int or null (return window in days),
+      "confidence_scores": {
+        "name": float,
+        "warranty_period": float,
+        "warranty_expiry": float
+      }
     }
   ]
 }
 ''';
 
-      // Build REST request payload
       final Map<String, dynamic> requestPayload = {
         "contents": [
           {
@@ -294,51 +291,22 @@ JSON structure:
 
       final String requestBody = jsonEncode(requestPayload);
 
-      // Call Google Gemini API endpoint via REST
       final http.Response response = await http.post(
         Uri.parse('$_baseUrl?key=$_apiKey'),
         headers: {'Content-Type': 'application/json'},
         body: requestBody,
       );
 
-      final endTime = DateTime.now();
-      final duration = endTime.difference(startTime);
-
       if (response.statusCode != 200) {
         final geminiExc = GeminiExceptionHandler.handleResponse(response);
-
-        // Retriable codes check: 429, 500, 503
         final bool isRetriable = [429, 500, 503].contains(response.statusCode);
         if (isRetriable && retryCount > 0) {
           final waitSec = geminiExc.retryAfterSeconds ?? 5;
-          GeminiExceptionHandler.logRequest(
-            endpoint: _baseUrl,
-            statusCode: response.statusCode,
-            errorType: 'Retriable text error. Waiting ${waitSec}s...',
-            retryCount: 1 - retryCount + 1,
-            responseTime: duration,
-          );
           await Future.delayed(Duration(seconds: waitSec));
           return _analyzeReceiptTextWithRetry(text: text, retryCount: retryCount - 1);
         }
-
-        GeminiExceptionHandler.logRequest(
-          endpoint: _baseUrl,
-          statusCode: response.statusCode,
-          errorType: 'API Text Response Error',
-          retryCount: 1 - retryCount,
-          responseTime: duration,
-        );
         throw geminiExc;
       }
-
-      GeminiExceptionHandler.logRequest(
-        endpoint: _baseUrl,
-        statusCode: 200,
-        errorType: 'Success',
-        retryCount: 1 - retryCount,
-        responseTime: duration,
-      );
 
       final Map<String, dynamic> jsonResponse = jsonDecode(response.body) as Map<String, dynamic>;
       final candidates = jsonResponse['candidates'] as List<dynamic>?;
@@ -365,35 +333,16 @@ JSON structure:
       final Map<String, dynamic> jsonMap = jsonDecode(cleanedJson) as Map<String, dynamic>;
       return ReceiptModel.fromJson(jsonMap);
     } catch (e) {
-      final duration = DateTime.now().difference(startTime);
       final mappedExc = GeminiExceptionHandler.handleException(e);
-
-      // Handle standard exceptions retry
       final bool isNetworkErr = e is SocketException || e is TimeoutException;
       if (isNetworkErr && retryCount > 0) {
-        GeminiExceptionHandler.logRequest(
-          endpoint: _baseUrl,
-          statusCode: null,
-          errorType: 'Retriable Text Network Error: $e. Waiting 5s...',
-          retryCount: 1 - retryCount + 1,
-          responseTime: duration,
-        );
         await Future.delayed(const Duration(seconds: 5));
         return _analyzeReceiptTextWithRetry(text: text, retryCount: retryCount - 1);
       }
-
-      GeminiExceptionHandler.logRequest(
-        endpoint: _baseUrl,
-        statusCode: mappedExc.statusCode,
-        errorType: mappedExc.message,
-        retryCount: 1 - retryCount,
-        responseTime: duration,
-      );
       throw mappedExc;
     }
   }
 
-  /// Removes backticks and code block markers if returned by the model.
   String _cleanJsonResponse(String response) {
     String cleaned = response.trim();
     if (cleaned.startsWith('```')) {

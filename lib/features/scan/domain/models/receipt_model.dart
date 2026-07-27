@@ -1,3 +1,6 @@
+import 'package:receipto/core/utils/warranty_utils.dart';
+import 'package:flutter/foundation.dart';
+
 class ReceiptModel {
   final String? merchantName;
   final String? invoiceNumber;
@@ -42,7 +45,7 @@ class ReceiptModel {
   });
 
   factory ReceiptModel.fromJson(Map<String, dynamic> json) {
-    // Resolve currency (assume INR by default unless USD or other clearly specified)
+    // Resolve currency
     String? resolvedCurrency = json['currency'] as String?;
     if (resolvedCurrency == null || resolvedCurrency.trim().isEmpty) {
       resolvedCurrency = '₹';
@@ -55,10 +58,43 @@ class ReceiptModel {
       }
     }
 
+    // 1. Extract root confidence scores
+    final dynamic rawConfScores = json['confidence_scores'];
+    Map<String, dynamic> confScores = {};
+    if (rawConfScores is Map<String, dynamic>) {
+      confScores = rawConfScores;
+    }
+
+    final double merchantConf = parseDouble(confScores['merchant_name']) ?? 1.0;
+    final double invoiceConf = parseDouble(confScores['invoice_number']) ?? 1.0;
+    final double dateConf = parseDouble(confScores['date']) ?? 1.0;
+    final double payConf = parseDouble(confScores['payment_method']) ?? 1.0;
+
+    String? parsedMerchant = json['merchant_name'] as String?;
+    if (parsedMerchant != null && parsedMerchant.isNotEmpty && merchantConf < 0.8) {
+      parsedMerchant = '$parsedMerchant (Low Confidence)';
+    }
+
+    String? parsedInvoice = json['invoice_number'] as String?;
+    if (parsedInvoice != null && parsedInvoice.isNotEmpty && invoiceConf < 0.8) {
+      parsedInvoice = '$parsedInvoice (Low Confidence)';
+    }
+
+    String? parsedPayment = json['payment_method'] as String?;
+    if (parsedPayment != null && parsedPayment.isNotEmpty && payConf < 0.8) {
+      parsedPayment = '$parsedPayment (Low Confidence)';
+    }
+
+    String? parsedDateStr = json['date'] as String?;
+    final String? normalizedDate = WarrantyUtils.parseAndNormalizeDate(parsedDateStr);
+    if (parsedDateStr != null && dateConf < 0.8) {
+      debugPrint('[Confidence Warning] Purchase Date "$parsedDateStr" has low confidence: $dateConf');
+    }
+
     return ReceiptModel(
-      merchantName: json['merchant_name'] as String?,
-      invoiceNumber: json['invoice_number'] as String?,
-      date: json['date'] as String?,
+      merchantName: parsedMerchant,
+      invoiceNumber: parsedInvoice,
+      date: normalizedDate ?? parsedDateStr,
       time: json['time'] as String?,
       gstNumber: json['gst_number'] as String?,
       currency: resolvedCurrency,
@@ -66,7 +102,7 @@ class ReceiptModel {
       tax: parseDouble(json['tax']),
       discount: parseDouble(json['discount']),
       total: parseDouble(json['total']),
-      paymentMethod: json['payment_method'] as String?,
+      paymentMethod: parsedPayment,
       category: json['category'] as String?,
       merchantAddress: json['merchant_address'] as String?,
       merchantPhone: json['merchant_phone'] as String?,
@@ -109,7 +145,6 @@ class ReceiptModel {
     if (val == null) return null;
     if (val is num) return val.toDouble();
     if (val is String) {
-      // Remove any currency symbol or commas before parsing
       final cleaned = val.replaceAll(RegExp(r'[^\d\.]'), '');
       return double.tryParse(cleaned);
     }
@@ -125,6 +160,50 @@ class ReceiptModel {
     }
     return null;
   }
+
+  ReceiptModel copyWith({
+    String? merchantName,
+    String? invoiceNumber,
+    String? date,
+    String? time,
+    String? gstNumber,
+    String? currency,
+    double? subtotal,
+    double? tax,
+    double? discount,
+    double? total,
+    String? paymentMethod,
+    String? category,
+    String? merchantAddress,
+    String? merchantPhone,
+    List<ReceiptItemModel>? items,
+    String? receiptHash,
+    int? fileSize,
+    double? confidenceScore,
+    String? rawText,
+  }) {
+    return ReceiptModel(
+      merchantName: merchantName ?? this.merchantName,
+      invoiceNumber: invoiceNumber ?? this.invoiceNumber,
+      date: date ?? this.date,
+      time: time ?? this.time,
+      gstNumber: gstNumber ?? this.gstNumber,
+      currency: currency ?? this.currency,
+      subtotal: subtotal ?? this.subtotal,
+      tax: tax ?? this.tax,
+      discount: discount ?? this.discount,
+      total: total ?? this.total,
+      paymentMethod: paymentMethod ?? this.paymentMethod,
+      category: category ?? this.category,
+      merchantAddress: merchantAddress ?? this.merchantAddress,
+      merchantPhone: merchantPhone ?? this.merchantPhone,
+      items: items ?? this.items,
+      receiptHash: receiptHash ?? this.receiptHash,
+      fileSize: fileSize ?? this.fileSize,
+      confidenceScore: confidenceScore ?? this.confidenceScore,
+      rawText: rawText ?? this.rawText,
+    );
+  }
 }
 
 class ReceiptItemModel {
@@ -138,6 +217,9 @@ class ReceiptItemModel {
   final bool? warrantyAvailable;
   final int? warrantyPeriod;
   final String? warrantyUnit;
+  final String? category;
+  final String? warrantyExpiry;
+  final int? returnWindow;
 
   ReceiptItemModel({
     required this.name,
@@ -150,11 +232,41 @@ class ReceiptItemModel {
     this.warrantyAvailable,
     this.warrantyPeriod,
     this.warrantyUnit,
+    this.category,
+    this.warrantyExpiry,
+    this.returnWindow,
   });
 
   factory ReceiptItemModel.fromJson(Map<String, dynamic> json) {
+    // 1. Extract item confidence scores
+    final dynamic rawConfScores = json['confidence_scores'];
+    Map<String, dynamic> confScores = {};
+    if (rawConfScores is Map<String, dynamic>) {
+      confScores = rawConfScores;
+    }
+
+    final double nameConf = parseDouble(confScores['name']) ?? 1.0;
+    final double periodConf = parseDouble(confScores['warranty_period']) ?? 1.0;
+    final double expiryConf = parseDouble(confScores['warranty_expiry']) ?? 1.0;
+
+    String parsedName = (json['name'] as String?) ?? 'Unknown Item';
+    if (nameConf < 0.8) {
+      parsedName = '$parsedName (Low Confidence)';
+    }
+
+    String? parsedUnit = json['warranty_unit'] as String?;
+    if (parsedUnit != null && parsedUnit.isNotEmpty && periodConf < 0.8) {
+      parsedUnit = '$parsedUnit (Low Confidence)';
+    }
+
+    String? parsedExpiry = json['warranty_expiry'] as String?;
+    final String? normalizedExpiry = WarrantyUtils.parseAndNormalizeDate(parsedExpiry);
+    if (parsedExpiry != null && expiryConf < 0.8) {
+      debugPrint('[Confidence Warning] Warranty Expiry Date "$parsedExpiry" has low confidence: $expiryConf');
+    }
+
     return ReceiptItemModel(
-      name: (json['name'] as String?) ?? 'Unknown Item',
+      name: parsedName,
       quantity: parseInt(json['quantity']),
       unitPrice: parseDouble(json['unit_price']),
       totalPrice: parseDouble(json['total_price']),
@@ -163,7 +275,10 @@ class ReceiptItemModel {
       serialNumber: json['serial_number'] as String?,
       warrantyAvailable: json['warranty_available'] as bool?,
       warrantyPeriod: parseInt(json['warranty_period']),
-      warrantyUnit: json['warranty_unit'] as String?,
+      warrantyUnit: parsedUnit,
+      category: json['category'] as String?,
+      warrantyExpiry: normalizedExpiry ?? parsedExpiry,
+      returnWindow: parseInt(json['return_window']),
     );
   }
 
@@ -179,6 +294,9 @@ class ReceiptItemModel {
       'warranty_available': warrantyAvailable,
       'warranty_period': warrantyPeriod,
       'warranty_unit': warrantyUnit,
+      'category': category,
+      'warranty_expiry': warrantyExpiry,
+      'return_window': returnWindow,
     };
   }
 
