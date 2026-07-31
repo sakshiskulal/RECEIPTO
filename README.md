@@ -31,25 +31,29 @@ Physical thermal receipts fade, tear, and get lost over time. When appliances br
 ## 📋 Table of Contents
 
 1. [Project Features](#-project-features)
-2. [Tech Stack & Package Directory](#-tech-stack--package-directory)
-3. [System Requirements](#-system-requirements)
-4. [Flutter Installation & Setup](#-flutter-installation--setup)
-5. [Android Phone & USB Debugging Setup](#-android-phone--usb-debugging-setup)
-6. [Project Installation](#-project-installation)
-7. [Firebase Authentication Setup](#-firebase-authentication-setup)
-8. [Supabase Database & Storage Setup](#-supabase-database--storage-setup)
-9. [Complete Supabase SQL Schema](#-complete-supabase-sql-schema)
-10. [Google Gemini AI Setup](#-google-gemini-ai-setup)
-11. [SMTP Email Reminders Setup](#-smtp-email-reminders-setup)
-12. [Environment Configuration (.env)](#-environment-configuration-env)
-13. [Project Architecture](#-project-architecture)
-14. [Application Workflow Diagrams](#-application-workflow-diagrams)
-15. [Running & Testing the Project](#-running--testing-the-project)
-16. [Building Production APK](#-building-production-apk)
-17. [Common Errors & Troubleshooting](#-common-errors--troubleshooting)
-18. [Best Practices](#-best-practices)
-19. [Contributors](#-contributors)
-20. [License](#-license)
+2. [Feature Checklist & Implementation Status](#-feature-checklist--implementation-status)
+3. [Application Screenshots](#-application-screenshots)
+4. [Tech Stack & Package Directory](#-tech-stack--package-directory)
+5. [System Requirements](#-system-requirements)
+6. [Flutter Installation & Setup](#-flutter-installation--setup)
+7. [Android Phone & USB Debugging Setup](#-android-phone--usb-debugging-setup)
+8. [Project Installation](#-project-installation)
+9. [Firebase Authentication Setup](#-firebase-authentication-setup)
+10. [Supabase Database & Storage Setup](#-supabase-database--storage-setup)
+11. [Complete Supabase SQL Schema](#-complete-supabase-sql-schema)
+12. [Google Gemini AI Setup](#-google-gemini-ai-setup)
+13. [SMTP Email Reminders Setup](#-smtp-email-reminders-setup)
+14. [Environment Configuration (.env)](#-environment-configuration-env)
+15. [Project Architecture](#-project-architecture)
+16. [Application Workflow Diagrams](#-application-workflow-diagrams)
+17. [Running & Testing the Project](#-running--testing-the-project)
+18. [Building Production APK](#-building-production-apk)
+19. [Common Errors & Troubleshooting](#-common-errors--troubleshooting)
+20. [Best Practices](#-best-practices)
+21. [Future Enhancements](#-future-enhancements)
+22. [Recent Updates & Version Highlights](#-recent-updates--version-highlights)
+23. [Contributors](#-contributors)
+24. [License](#-license)
 
 ---
 
@@ -58,70 +62,117 @@ Physical thermal receipts fade, tear, and get lost over time. When appliances br
 > [!NOTE]
 > All features listed below are 100% fully implemented and verified in the codebase.
 
-### 🔐 1. Firebase Authentication
-- **Email & Password Authentication**: Full signup, login, password reset, and session management.
-- **Google Sign-In Integration**: One-tap native Google OAuth authentication.
-- **Persistent State**: Reactive Auth state listener using Riverpod (`firebaseAuthServiceProvider`).
+### 🔐 1. Authentication System
+- **Firebase Authentication**: Full user signup, email verification, login, password reset, and secure session management.
+- **Google Sign-In**: Native one-tap Google OAuth 2.0 single sign-on integration.
+- **Email Login**: Direct credential login with form validation and state persistence.
+- **Persistent State**: Reactive Auth state listener powered by Flutter Riverpod (`firebaseAuthServiceProvider`).
 
-### 📷 2. Receipt Scanning & Multimodal Camera
-- Integrated custom camera interface and gallery photo importer (`image_picker`, `camera`).
-- Native support for image formats (`.jpg`, `.png`, `.heic`, `.webp`) and PDF document imports (`file_picker`).
+### 📷 2. AI OCR & Receipt Processing
+- **AI OCR**: Multimodal image & PDF optical character recognition powered by Google Gemini 2.5 Flash.
+- **Receipt Parsing**: Automatic field parsing extracting invoice numbers, purchase timestamps, subtotal, tax amounts, discounts, and currency symbols (`₹`, `$`, `€`).
+- **Merchant Extraction**: Automatic identification of merchant business name, physical street address, and contact numbers.
+- **Product Extraction**: Line-item level parsing capturing item name, quantity, unit price, and total line-item price.
+- **Warranty Detection**: Intelligent identification of eligible appliances/electronics and automated warranty period extraction (in months or years).
 
-### 🧠 3. AI Receipt Extraction (Gemini 2.5 Flash)
-- Multimodal AI prompt engineering extracts:
-  - Merchant Name & Merchant Address
-  - Purchase Date & Time
-  - Invoice / Receipt #
-  - GST / Tax ID Number
-  - Currency Symbol (e.g., `₹`, `$`, `€`)
-  - Subtotal, Tax Amount, Discount, Grand Total
-  - Line Items (Item Name, Quantity, Unit Price, Total Price)
-  - Auto-Categorization (Grocery, Electronics, Fuel, Dining, Medical, Shopping, Utilities, Other)
-  - Product Warranty Availability (Period in Months/Years & Product Name)
+### 🏷️ 3. AI Receipt Categorization
+- **Automatic AI Category Detection**: Classifies uploaded receipts into standard expense categories (Electronics, Groceries, Food & Dining, Fuel, Medical, Utilities, Shopping, etc.).
+- **Gemini Classification**: Context-aware LLM prompt engineering for precise category assignment based on merchant & item context.
+- **Keyword Fallback**: Offline keyword matching algorithm to guarantee instant classification when network is unavailable or API limits occur.
+- **Stored Categories**: Standardized category tagging saved in Supabase database for consistent querying.
+- **Category Filters**: Real-time filtering and grouping of receipts by category across the application.
 
-### 💾 4. Database Storage & Supabase Sync
-- Stored securely in Supabase PostgreSQL tables (`receipts`, `receipt_items`, `warranties`, `notifications`).
-- High-res receipt scans uploaded to Supabase Storage bucket (`receipts_bucket`).
+### 💬 4. AI Warranty Assistant
+- **AI Chat Assistant**: Dedicated conversational AI assistant (`AIAssistantScreen`) with quick prompt suggestions.
+- **Natural Language Queries**: Freeform natural language inquiries (e.g., *"Is my laptop under warranty?"*, *"Show products expiring this month"*).
+- **Warranty Lookup**: Instant lookup for active, expiring, or lifetime warranties.
+- **Spending Queries**: Instant financial lookups by brand, category, month, or price threshold (e.g., *"How much did I spend this year?"*).
+- **Merchant Queries**: Quick aggregation of purchases made at specific stores or merchants.
+- **AI Generated Responses**: Uses Gemini intent detection combined with a local query engine to generate structured, human-friendly responses.
 
-### 🛡️ 5. Automated Warranty Detection & Dashboard
-- Automatically creates linked warranty entries whenever Gemini detects protected electronics or appliances.
-- Dynamic color-coded status badges:
-  - `ACTIVE` (Green)
-  - `EXPIRING SOON` (Orange - 30 days remaining)
-  - `EXPIRED` (Red)
-  - `CLAIMED` (Blue)
-- Animated Warranty Card featuring left accent border, compact grid, thin 4.5px progress bar, and days remaining countdown.
+### 📊 5. Professional Analytics Dashboard
+- **Monthly Spending Analysis**: In-depth breakdown of monthly expenses, average transaction totals, and net discount savings.
+- **Monthly Comparison**: Month-over-month spending comparison and variance analytics.
+- **Category Breakdown**: Dynamic category distribution visualization detailing spending proportions.
+- **Interactive Weekly Activity**: Tap-to-inspect weekly activity chart with daily spending bars and detailed day-by-day itemization.
+- **Merchant Analytics**: Aggregated spending by merchant with transaction frequency metrics.
+- **Warranty Analytics**: Overview of warranty inventory value, active coverage counts, and upcoming expiration liabilities.
+- **Budget & Forecast**: Custom monthly budget setting with `SharedPreferences` persistence, spending rate forecasting, and budget alerts.
+- **AI Spending Insights**: Context-aware AI insights highlighting top spending categories, unusual spikes, and savings opportunities.
+- **Summary Cards**: Frosted glass summary cards for total spending, active warranties, discount savings, and budget health.
+- **Empty State Handling**: Smooth dark glassmorphism placeholder states when no receipts or warranties are present.
+- **Performance Optimizations**: Multi-level calculation caching (`_cachedData`) preventing redundant re-computations and guaranteeing fluid 60fps scrolling.
 
-### 🔔 6. Notifications & Email Reminders
-- **Local Push Notifications**: Scheduled device notifications at 30, 15, 7, 3, 1, and 0 days prior to expiry (`flutter_local_notifications`).
-- **SMTP Email Reminders**: Background notification worker sends HTML email reminders directly to the user's inbox using `mailer`.
-- **In-App Notification Center**: History log tracking unread notifications with mark-as-read and clear-all actions.
+### 🛡️ 6. Warranty Management
+- **Active Warranties**: View all active product warranties with live coverage indicators.
+- **Expiring Warranties**: Highlighted warning cards for products expiring within 30 days.
+- **Expired Warranties**: Historical tracking archive for products past their warranty coverage date.
+- **Remaining Days**: Real-time countdown indicator showing exact remaining coverage days.
+- **Warranty Timeline**: Visual timeline showcasing purchase dates, current milestone, and exact expiration targets.
 
-### 🔍 7. Priority Duplicate Receipt Detection
+### 🔔 7. Warranty Reminder System
+- **Local Notifications**: Device push notifications scheduled at 30, 15, 7, 3, 1, and 0 days prior to warranty expiration (`flutter_local_notifications`).
+- **Email Reminders**: Automated HTML email notification worker sending alerts directly to the user's email inbox using `mailer`.
+- **Reminder Scheduling**: Timezone-aware notification scheduler (`flutter_timezone`, `timezone`).
+- **SMTP Email Support**: Secure background SMTP mail client configuration supporting Gmail App Passwords.
+- **Automatic Reminder Processing**: State-tracked notification flags (`notification_30_sent`, `email_30_sent`) to eliminate duplicate alerts.
+
+### 🔍 8. Priority Duplicate Receipt Detection
 Prevents double-counting expenses using a 3-tier algorithm:
 1. **Priority 1**: SHA-256 fingerprint hash comparison (`receipt_hash` generated from `merchant_name + invoice_number + date + total`).
 2. **Priority 2**: Exact 4-field matching (`invoice_number`, `merchant_name`, `purchase_date`, `grand_total`).
 3. **Priority 3**: Fallback matching when invoice number is missing: filename + file size + Jaccard OCR text token similarity (>80%).
 - Provides user choice: **Cancel Upload** or **Replace Existing Receipt**.
 
-### 🗑️ 8. Gallery-Style Recycle Bin
+### 🗑️ 9. Gallery-Style Recycle Bin
 - Soft-delete system using `is_deleted = true` and `deleted_at` timestamp.
 - Receipts moved to Recycle Bin remain safely stored for 30 days.
 - Options: **Restore Receipt**, **Delete Forever**, or **Empty Bin**.
 - Automated background worker permanently purges receipts older than 30 days.
 
-### 📄 9. Digital PDF Export & Native Sharing
+### 📄 10. Digital PDF Export & Native Sharing
 - Generates branded, multi-page digital invoice PDFs using `pdf` and `printing`.
 - Page 1 includes merchant information, items table, financial summary, and warranty details; Page 2 embeds the original high-res scan image.
 - Native share sheet integration (`share_plus`) supporting PDF, original image, PDF + image combo, or text summary exports.
 
-### 📊 10. Dashboard & Analytics Engine
-- Financial summary breakdown: Total Spending, Total Discounts Saved, Active Warranties Count.
-- Interactive category spending breakdown and weekly trend sparklines.
-- Global search filter across merchants, invoice numbers, categories, and line items.
-
 ### 🎨 11. Dark Glassmorphism Design System
 - Modern dark mode aesthetic built with custom HSL color tokens (`AppColors`), radial nebula backgrounds, frosted glass cards (`GlassCard`), and 250ms micro-animations.
+
+---
+
+## ✅ Feature Checklist & Implementation Status
+
+| Feature Module | Implementation Status | Core Technologies & Capability |
+| :--- | :---: | :--- |
+| **AI Receipt Scanner** | ✅ Implemented | Gemini 2.5 Flash multimodal OCR for photos & PDFs |
+| **AI Receipt Categorization** | ✅ Implemented | Gemini AI classification with local keyword fallback |
+| **AI Warranty Assistant** | ✅ Implemented | Natural language chat assistant with intent parsing engine |
+| **Professional Analytics Dashboard**| ✅ Implemented | Monthly analysis, interactive weekly charts, merchant/warranty analytics |
+| **Budget Forecast** | ✅ Implemented | Monthly budget configuration & spending velocity forecast |
+| **Warranty Tracking** | ✅ Implemented | Active/Expiring status, days remaining countdown & timeline |
+| **Merchant Analytics** | ✅ Implemented | Merchant spend breakdown & frequency tracking |
+| **Email Reminder System** | ✅ Implemented | Background SMTP HTML email notifications via `mailer` |
+| **Local Notifications** | ✅ Implemented | Scheduled push notifications (30, 15, 7, 3, 1, 0 days) |
+| **Firebase Authentication** | ✅ Implemented | Email/Password & Native Google OAuth Sign-In |
+| **Duplicate Receipt Detection** | ✅ Implemented | 3-tier SHA-256 hash & Jaccard text token similarity |
+| **Recycle Bin & Soft Delete** | ✅ Implemented | 30-day soft-delete retention with automated purge worker |
+| **Digital PDF Export** | ✅ Implemented | Multi-page invoice PDF generation & native OS share sheet |
+
+---
+
+## 🖼️ Application Screenshots
+
+| Login Screen | Dashboard Screen |
+| :---: | :---: |
+| ![Login Screen](docs/screenshots/login.png) | ![Dashboard Screen](docs/screenshots/dashboard.png) |
+
+| Analytics Dashboard | AI Warranty Assistant |
+| :---: | :---: |
+| ![Analytics Dashboard](docs/screenshots/analytics.png) | ![AI Warranty Assistant](docs/screenshots/ai_assistant.png) |
+
+| Receipt Scanner | Warranty Tracking |
+| :---: | :---: |
+| ![Receipt Scanner](docs/screenshots/scanner.png) | ![Warranty Tracking](docs/screenshots/warranty.png) |
 
 ---
 
@@ -131,14 +182,17 @@ Prevents double-counting expenses using a 3-tier algorithm:
 | :--- | :--- |
 | **Flutter 3.29** | Cross-platform UI framework for Android & iOS |
 | **Dart 3.7** | Strongly-typed client-side programming language |
-| **Firebase Auth** | User identity, email authentication & Google OAuth |
-| **Supabase DB** | Production PostgreSQL relational database |
-| **Supabase Storage** | Cloud object storage for high-res receipt scan images |
+| **Material 3** | Google Material Design 3 component system & typography |
+| **Firebase Auth** | Identity management, Email authentication & Google OAuth 2.0 |
+| **Supabase DB** | Production PostgreSQL relational cloud database |
+| **Supabase Storage** | Cloud object storage for receipt scan images |
 | **Flutter Riverpod** | Reactive state management & dependency injection |
 | **GoRouter** | Declarative routing with StatefulShellRoute bottom tabs |
-| **Google Gemini AI** | Multimodal LLM for OCR and receipt information parsing |
-| **Mailer (SMTP)** | Direct background SMTP email reminder delivery |
-| **Local Notifications** | Device scheduled push notification reminders |
+| **Google Gemini API** | Multimodal LLM (Gemini 2.5 Flash) for OCR, classification & AI chat assistant |
+| **SMTP Mail** | Direct background SMTP email reminder delivery (`mailer`) |
+| **Flutter Local Notifications** | Device scheduled push notification reminders |
+| **SharedPreferences** | Key-value local persistence for budget limits & user settings |
+| **Custom Charts** | Interactive weekly spending bar charts & sparklines |
 | **PDF & Printing** | Invoice PDF compilation and preview rendering |
 | **Share Plus & Open Filex** | Native OS share sheet and local file launcher |
 
@@ -147,18 +201,18 @@ Prevents double-counting expenses using a 3-tier algorithm:
 dependencies:
   flutter:
     sdk: flutter
-  flutter_riverpod: ^2.6.1
-  go_router: ^14.8.1
-  google_fonts: ^6.3.3
+  flutter_riverpod: ^2.5.1
+  go_router: ^14.2.7
+  google_fonts: ^6.2.1
   firebase_core: ^4.11.0
   firebase_auth: ^6.5.4
-  google_sign_in: ^7.2.11
+  google_sign_in: ^7.2.0
   supabase_flutter: ^2.15.2
   flutter_dotenv: ^6.0.1
   image_picker: ^1.2.2
-  camera: ^0.11.4
-  file_picker: ^8.3.7
-  path_provider: ^2.1.5
+  camera: ^0.11.0+2
+  file_picker: ^8.0.0
+  path_provider: ^2.1.3
   pdf: ^3.12.0
   printing: ^5.14.3
   share_plus: ^12.0.2
@@ -167,6 +221,9 @@ dependencies:
   mailer: ^7.1.0
   local_auth: ^3.0.1
   crypto: ^3.0.7
+  shared_preferences: ^2.5.2
+  workmanager: ^0.9.0+3
+  shimmer: ^3.0.0
 ```
 
 ---
@@ -640,6 +697,31 @@ The compiled APK will be available at:
 
 ---
 
+## 🚀 Future Enhancements
+
+The following roadmap features are planned for future development and releases of Receipto (currently NOT implemented):
+
+- ⏳ **AI Financial Health Score**: Advanced financial stability metric and spending score computed from multi-month receipt patterns.
+- ⏳ **Product Price Tracking**: Merchant price drop notifications and historical price trend tracking for purchased products.
+- ⏳ **Smart Recall Alerts**: Automated manufacturer safety recall alerts matching scanned receipt product models.
+- ⏳ **Warranty Claim Assistant**: Interactive AI wizard to draft formal warranty claim emails and claim documentation for manufacturers.
+- ⏳ **Smart Product Passport**: Ownership verification and resale transfer passport for high-value warranted assets.
+
+---
+
+## 📝 Recent Updates & Version Highlights
+
+### Version 1.0.0 - Production Feature Suite
+- **Professional Analytics Dashboard**: Redesigned Analytics module with Monthly Spending Analysis, Monthly Comparison, Category Breakdown, Interactive Weekly Activity, Merchant Analytics, Warranty Analytics, Budget & Forecast, and AI Spending Insights.
+- **AI Warranty Assistant**: Interactive conversational AI assistant capable of processing natural language queries regarding warranties, receipts, merchants, and spending threshold lookups.
+- **AI Receipt Categorization**: Multimodal Gemini receipt classification engine with fallback local keyword matching across 25+ categories.
+- **Budget Forecast Engine**: Custom monthly spending budget configuration with `SharedPreferences` persistence and real-time forecast tracking.
+- **Merchant Analytics**: Detailed spend aggregation and merchant transaction frequency breakdown.
+- **Warranty Analytics**: Full asset warranty lifecycle tracking covering active, expiring, and expired items with remaining days countdown.
+- **Email Reminder Improvements**: SMTP background worker providing automated HTML email reminders for expiring product warranties.
+
+---
+
 ## 👥 Contributors
 
 - **Lead Developer**: Receipto Engineering Team
@@ -651,3 +733,4 @@ The compiled APK will be available at:
 ## 📄 License
 
 This project is licensed under the MIT License - see the [LICENSE](LICENSE) file for details.
+
