@@ -22,13 +22,41 @@ class DashboardScreen extends ConsumerWidget {
 
   IconData _getCategoryIcon(String category) {
     switch (category.toLowerCase()) {
-      case 'grocery': return Icons.shopping_cart;
-      case 'food': return Icons.restaurant;
-      case 'fuel': return Icons.local_gas_station;
-      case 'shopping': return Icons.shopping_bag;
-      case 'medical': return Icons.medical_services;
-      case 'bills': return Icons.bolt;
-      default: return Icons.receipt_long;
+      case 'grocery':
+      case 'groceries':
+        return Icons.shopping_cart;
+      case 'food':
+      case 'food & dining':
+      case 'dining':
+        return Icons.restaurant;
+      case 'fuel':
+        return Icons.local_gas_station;
+      case 'shopping':
+        return Icons.shopping_bag;
+      case 'medical':
+      case 'healthcare':
+      case 'pharmacy':
+        return Icons.medical_services;
+      case 'bills':
+      case 'utilities':
+        return Icons.bolt;
+      case 'electronics':
+      case 'mobile & gadgets':
+      case 'computers':
+        return Icons.devices;
+      default:
+        return Icons.receipt_long;
+    }
+  }
+
+  String _getGreetingPrefix() {
+    final hour = DateTime.now().hour;
+    if (hour >= 4 && hour < 12) {
+      return '👋 Good Morning,';
+    } else if (hour >= 12 && hour < 17) {
+      return '👋 Good Afternoon,';
+    } else {
+      return '👋 Good Evening,';
     }
   }
 
@@ -74,7 +102,7 @@ class DashboardScreen extends ConsumerWidget {
         id: row['id'].toString(),
         merchant: row['merchant_name'] as String? ?? 'Unknown Merchant',
         date: row['date'] as String? ?? 'Unknown Date',
-        amount: -amt, // Negative values match spending display in Dashboard screen
+        amount: amt, // Positive value for clean formatted presentation
         category: category,
         icon: _getCategoryIcon(category),
         currency: row['currency'] as String?,
@@ -97,7 +125,7 @@ class DashboardScreen extends ConsumerWidget {
                 children: [
                   // App Bar Space
                   _buildHeader(context, ref),
-                  const SizedBox(height: 20),
+                  const SizedBox(height: 24),
 
                   // Greeting Info
                   _buildGreeting(context, ref),
@@ -163,28 +191,44 @@ class DashboardScreen extends ConsumerWidget {
     );
   }
 
-  // Greeting widget displaying logged-in user name
+  // Greeting widget displaying time-based greeting and user name
   Widget _buildGreeting(BuildContext context, WidgetRef ref) {
     final user = ref.watch(firebaseAuthServiceProvider).currentUser;
-    final displayName = user?.displayName ?? 'User';
+    final displayName = user?.displayName ?? '';
+    final firstName = displayName.trim().isNotEmpty ? displayName.trim().split(' ').first : 'User';
 
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
         Text(
-          'Hello, $displayName',
-          style: GoogleFonts.hankenGrotesk(
-            color: AppColors.onSurface,
-            fontSize: 28,
-            fontWeight: FontWeight.bold,
+          _getGreetingPrefix(),
+          style: GoogleFonts.inter(
+            color: AppColors.onSurfaceVariant,
+            fontSize: 14,
+            fontWeight: FontWeight.w600,
+            letterSpacing: 0.2,
+          ),
+        ),
+        const SizedBox(height: 2),
+        FittedBox(
+          fit: BoxFit.scaleDown,
+          alignment: Alignment.centerLeft,
+          child: Text(
+            firstName,
+            style: GoogleFonts.hankenGrotesk(
+              color: AppColors.onSurface,
+              fontSize: 28,
+              fontWeight: FontWeight.bold,
+              height: 1.2,
+            ),
           ),
         ),
         const SizedBox(height: 4),
         Text(
-          'Track your spending and organize invoices.',
+          'Track your spending and protect your warranties.',
           style: AppFonts.geist(
             color: AppColors.onSurfaceVariant,
-            fontSize: 14.5,
+            fontSize: 14,
             fontWeight: FontWeight.normal,
             height: 1.4,
           ),
@@ -288,7 +332,7 @@ class DashboardScreen extends ConsumerWidget {
                 shape: BoxShape.circle,
                 boxShadow: [
                   BoxShadow(
-                    color: AppColors.primary.withValues(alpha: 0.06),
+                    color: AppColors.primary.withValues(alpha: 0.08),
                     blurRadius: 40,
                   ),
                 ],
@@ -296,60 +340,70 @@ class DashboardScreen extends ConsumerWidget {
             ),
           ),
           
-          Column(
-            crossAxisAlignment: CrossAxisAlignment.stretch,
+          Row(
+            crossAxisAlignment: CrossAxisAlignment.center,
             children: [
-              Row(
-                crossAxisAlignment: CrossAxisAlignment.end,
-                mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                children: [
-                  // Spending Amount Info
-                  Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      Text(
-                        'Monthly Spending',
-                        style: textTheme.labelMd.copyWith(
-                          color: AppColors.onSurfaceVariant,
-                        ),
+              // Spending Amount Info
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      'Monthly Spending',
+                      style: textTheme.labelMd.copyWith(
+                        color: AppColors.onSurfaceVariant,
+                        fontWeight: FontWeight.w500,
                       ),
-                      const SizedBox(height: 4),
-                      Text(
+                    ),
+                    const SizedBox(height: 4),
+                    FittedBox(
+                      fit: BoxFit.scaleDown,
+                      alignment: Alignment.centerLeft,
+                      child: Text(
                         CurrencyFormatter.format(totalSpending),
                         style: textTheme.displayLg.copyWith(
                           color: AppColors.onSurface,
+                          fontWeight: FontWeight.bold,
                         ),
                       ),
-                      const SizedBox(height: 4),
-                      Row(
-                        children: [
-                          const Icon(
-                            Icons.trending_up,
-                            color: AppColors.tertiary,
-                            size: 16,
-                          ),
-                          const SizedBox(width: 4),
-                          Text(
+                    ),
+                    const SizedBox(height: 6),
+                    Row(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        const Icon(
+                          Icons.trending_up,
+                          color: AppColors.tertiary,
+                          size: 16,
+                        ),
+                        const SizedBox(width: 4),
+                        Flexible(
+                          child: Text(
                             '2.4% vs last month',
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
                             style: textTheme.labelMd.copyWith(
                               color: AppColors.tertiary,
                               fontWeight: FontWeight.bold,
                             ),
                           ),
-                        ],
-                      ),
-                    ],
-                  ),
-                  
-                  // Sparkline Column charts using containers
-                  const SizedBox(
-                    width: 120,
-                    height: 64,
-                    child: SparklineWidget(
-                      heights: [0.4, 0.6, 0.5, 0.75, 0.65, 0.9, 1.0],
+                        ),
+                      ],
                     ),
+                  ],
+                ),
+              ),
+              const SizedBox(width: 12),
+              
+              // Sparkline graph bounded flexibly on the right
+              Flexible(
+                child: Container(
+                  constraints: const BoxConstraints(maxWidth: 110, minWidth: 60),
+                  height: 56,
+                  child: const SparklineWidget(
+                    heights: [0.4, 0.6, 0.5, 0.75, 0.65, 0.9, 1.0],
                   ),
-                ],
+                ),
               ),
             ],
           ),
@@ -362,91 +416,114 @@ class DashboardScreen extends ConsumerWidget {
   Widget _buildStatsGrid(BuildContext context, double totalSaved, int scannedCount) {
     final textTheme = Theme.of(context).textTheme;
 
-    return Row(
-      children: [
-        // Card 1: Total Saved
-        Expanded(
-          child: GlassCard(
-            borderRadius: AppRadius.lg,
-            padding: const EdgeInsets.all(AppSpacing.sm),
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                // Icon wrapper box
-                Container(
-                  width: 36,
-                  height: 36,
-                  decoration: BoxDecoration(
-                    borderRadius: BorderRadius.circular(10),
-                    color: AppColors.tertiary.withValues(alpha: 0.1),
+    return IntrinsicHeight(
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          // Card 1: Total Saved
+          Expanded(
+            child: GlassCard(
+              borderRadius: AppRadius.lg,
+              padding: const EdgeInsets.all(AppSpacing.md),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                children: [
+                  Container(
+                    width: 36,
+                    height: 36,
+                    decoration: BoxDecoration(
+                      borderRadius: BorderRadius.circular(10),
+                      color: AppColors.tertiary.withValues(alpha: 0.12),
+                    ),
+                    child: const Icon(
+                      Icons.savings_outlined,
+                      color: AppColors.tertiary,
+                      size: 20,
+                    ),
                   ),
-                  child: const Icon(
-                    Icons.savings_outlined,
-                    color: AppColors.tertiary,
-                    size: 20,
+                  const SizedBox(height: 16),
+                  Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(
+                        'Total Saved',
+                        style: textTheme.labelMd.copyWith(
+                          color: AppColors.onSurfaceVariant,
+                        ),
+                      ),
+                      const SizedBox(height: 2),
+                      FittedBox(
+                        fit: BoxFit.scaleDown,
+                        alignment: Alignment.centerLeft,
+                        child: Text(
+                          CurrencyFormatter.format(totalSaved),
+                          style: textTheme.headlineLg.copyWith(
+                            color: AppColors.tertiary,
+                            fontWeight: FontWeight.bold,
+                          ),
+                        ),
+                      ),
+                    ],
                   ),
-                ),
-                const SizedBox(height: 16),
-                Text(
-                  'Total Saved',
-                  style: textTheme.labelMd.copyWith(
-                    color: AppColors.onSurfaceVariant,
-                  ),
-                ),
-                const SizedBox(height: 2),
-                Text(
-                  CurrencyFormatter.format(totalSaved),
-                  style: textTheme.headlineLg.copyWith(
-                    color: AppColors.tertiary,
-                  ),
-                ),
-              ],
+                ],
+              ),
             ),
           ),
-        ),
-        const SizedBox(width: 16),
-        
-        // Card 2: Receipts Scanned
-        Expanded(
-          child: GlassCard(
-            borderRadius: AppRadius.lg,
-            padding: const EdgeInsets.all(AppSpacing.sm),
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                // Icon wrapper box
-                Container(
-                  width: 36,
-                  height: 36,
-                  decoration: BoxDecoration(
-                    borderRadius: BorderRadius.circular(10),
-                    color: AppColors.secondary.withValues(alpha: 0.1),
+          const SizedBox(width: 16),
+          
+          // Card 2: Receipts Scanned
+          Expanded(
+            child: GlassCard(
+              borderRadius: AppRadius.lg,
+              padding: const EdgeInsets.all(AppSpacing.md),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                children: [
+                  Container(
+                    width: 36,
+                    height: 36,
+                    decoration: BoxDecoration(
+                      borderRadius: BorderRadius.circular(10),
+                      color: AppColors.secondary.withValues(alpha: 0.12),
+                    ),
+                    child: const Icon(
+                      Icons.receipt_long_outlined,
+                      color: AppColors.secondary,
+                      size: 20,
+                    ),
                   ),
-                  child: const Icon(
-                    Icons.receipt_long_outlined,
-                    color: AppColors.secondary,
-                    size: 20,
+                  const SizedBox(height: 16),
+                  Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(
+                        'Receipts Scanned',
+                        style: textTheme.labelMd.copyWith(
+                          color: AppColors.onSurfaceVariant,
+                        ),
+                      ),
+                      const SizedBox(height: 2),
+                      FittedBox(
+                        fit: BoxFit.scaleDown,
+                        alignment: Alignment.centerLeft,
+                        child: Text(
+                          '$scannedCount',
+                          style: textTheme.headlineLg.copyWith(
+                            color: AppColors.onSurface,
+                            fontWeight: FontWeight.bold,
+                          ),
+                        ),
+                      ),
+                    ],
                   ),
-                ),
-                const SizedBox(height: 16),
-                Text(
-                  'Receipts Scanned',
-                  style: textTheme.labelMd.copyWith(
-                    color: AppColors.onSurfaceVariant,
-                  ),
-                ),
-                const SizedBox(height: 2),
-                Text(
-                  '$scannedCount',
-                  style: textTheme.headlineLg.copyWith(
-                    color: AppColors.onSurface,
-                  ),
-                ),
-              ],
+                ],
+              ),
             ),
           ),
-        ),
-      ],
+        ],
+      ),
     );
   }
 
@@ -509,7 +586,7 @@ class DashboardScreen extends ConsumerWidget {
                       ),
                     ],
                   ),
-                  const SizedBox(height: 16),
+                  const SizedBox(height: 14),
                   
                   // Content text with highlighted dining
                   RichText(
@@ -531,22 +608,28 @@ class DashboardScreen extends ConsumerWidget {
                       ],
                     ),
                   ),
-                  const SizedBox(height: 20),
+                  const SizedBox(height: 18),
                   
-                  OutlinedButton(
-                    onPressed: () => context.push('/ai-assistant'),
-                    style: OutlinedButton.styleFrom(
-                      side: BorderSide(color: AppColors.primary.withValues(alpha: 0.3)),
-                      shape: RoundedRectangleBorder(
-                        borderRadius: BorderRadius.circular(10),
-                      ),
-                      padding: const EdgeInsets.symmetric(vertical: 14),
-                    ),
-                    child: Text(
-                      'Ask AI Assistant',
-                      style: textTheme.labelMd.copyWith(
-                        color: AppColors.primary,
-                        fontWeight: FontWeight.bold,
+                  Align(
+                    alignment: Alignment.center,
+                    child: SizedBox(
+                      width: double.infinity,
+                      child: OutlinedButton(
+                        onPressed: () => context.push('/ai-assistant'),
+                        style: OutlinedButton.styleFrom(
+                          side: BorderSide(color: AppColors.primary.withValues(alpha: 0.35)),
+                          shape: RoundedRectangleBorder(
+                            borderRadius: BorderRadius.circular(10),
+                          ),
+                          padding: const EdgeInsets.symmetric(vertical: 13),
+                        ),
+                        child: Text(
+                          'Ask AI Assistant',
+                          style: textTheme.labelMd.copyWith(
+                            color: AppColors.primary,
+                            fontWeight: FontWeight.bold,
+                          ),
+                        ),
                       ),
                     ),
                   ),
@@ -575,7 +658,6 @@ class DashboardScreen extends ConsumerWidget {
         ),
         TextButton(
           onPressed: () {
-            // Shell routing indexed state navigation to Tab index 1 (Receipts)
             final navigationShell = StatefulNavigationShell.of(context);
             navigationShell.goBranch(1);
           },
@@ -618,8 +700,6 @@ class DashboardScreen extends ConsumerWidget {
         return ReceiptListItem(
           data: item,
           onTap: () {
-            // Navigate to the newly required detail screen using route:
-            // /receipts/details/:id
             context.push('/receipts/details/${item.id}');
           },
         );
@@ -707,12 +787,11 @@ class DashboardScreen extends ConsumerWidget {
             ),
             const SizedBox(height: 20),
             Row(
-              mainAxisAlignment: MainAxisAlignment.spaceBetween,
               children: [
-                _buildWarrantyStatItem('Protected', '$total', Colors.white),
-                _buildWarrantyStatItem('Active', '$active', Colors.greenAccent),
-                _buildWarrantyStatItem('Expiring', '$expiring', Colors.orangeAccent),
-                _buildWarrantyStatItem('Expired', '$expired', Colors.redAccent),
+                Expanded(child: _buildWarrantyStatItem('Protected', '$total', Colors.white)),
+                Expanded(child: _buildWarrantyStatItem('Active', '$active', Colors.greenAccent)),
+                Expanded(child: _buildWarrantyStatItem('Expiring', '$expiring', Colors.orangeAccent)),
+                Expanded(child: _buildWarrantyStatItem('Expired', '$expired', Colors.redAccent)),
               ],
             ),
             if (nextExpiring != null) ...[
@@ -724,13 +803,13 @@ class DashboardScreen extends ConsumerWidget {
                   const Icon(
                     Icons.calendar_today_outlined,
                     color: Colors.orangeAccent,
-                    size: 16,
+                    size: 15,
                   ),
                   const SizedBox(width: 8),
                   Text(
                     'Next Expiring:',
                     style: TextStyle(
-                      color: Colors.white.withValues(alpha: 0.5),
+                      color: Colors.white.withValues(alpha: 0.6),
                       fontSize: 12,
                       fontWeight: FontWeight.bold,
                     ),
@@ -753,7 +832,7 @@ class DashboardScreen extends ConsumerWidget {
                       overflow: TextOverflow.ellipsis,
                     ),
                   ),
-                  const SizedBox(width: 8),
+                  const SizedBox(width: 12),
                   Text(
                     '${WarrantyUtils.calculateDaysRemaining(nextExpiring.expiryDate)} Days Left',
                     style: const TextStyle(
@@ -774,17 +853,22 @@ class DashboardScreen extends ConsumerWidget {
   Widget _buildWarrantyStatItem(String label, String value, Color color) {
     return Column(
       children: [
-        Text(
-          value,
-          style: GoogleFonts.hankenGrotesk(
-            color: color,
-            fontSize: 22,
-            fontWeight: FontWeight.bold,
+        FittedBox(
+          fit: BoxFit.scaleDown,
+          child: Text(
+            value,
+            style: GoogleFonts.hankenGrotesk(
+              color: color,
+              fontSize: 22,
+              fontWeight: FontWeight.bold,
+            ),
           ),
         ),
         const SizedBox(height: 4),
         Text(
           label,
+          maxLines: 1,
+          overflow: TextOverflow.ellipsis,
           style: GoogleFonts.inter(
             color: AppColors.onSurfaceVariant,
             fontSize: 11,
@@ -794,3 +878,4 @@ class DashboardScreen extends ConsumerWidget {
     );
   }
 }
+

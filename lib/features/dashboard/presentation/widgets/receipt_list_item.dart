@@ -38,9 +38,8 @@ class ReceiptListItem extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final textTheme = Theme.of(context).textTheme;
-    final bool isNegative = data.amount < 0;
     final double absoluteAmount = data.amount.abs();
-    final String formattedText = '${isNegative ? '-' : ''}${CurrencyFormatter.format(absoluteAmount, currency: data.currency)}';
+    final String formattedText = CurrencyFormatter.format(absoluteAmount, currency: data.currency);
 
     return Material(
       color: Colors.transparent,
@@ -51,7 +50,6 @@ class ReceiptListItem extends StatelessWidget {
           borderRadius: AppRadius.lg,
           padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
           child: Row(
-            mainAxisAlignment: MainAxisAlignment.spaceBetween,
             children: [
               // Left: Icon + merchant info
               Expanded(
@@ -61,9 +59,10 @@ class ReceiptListItem extends StatelessWidget {
                     Container(
                       width: 44,
                       height: 44,
-                      decoration: const BoxDecoration(
+                      decoration: BoxDecoration(
                         shape: BoxShape.circle,
-                        color: AppColors.surfaceVariant,
+                        color: AppColors.surfaceVariant.withValues(alpha: 0.4),
+                        border: Border.all(color: Colors.white.withValues(alpha: 0.06)),
                       ),
                       child: Icon(
                         data.icon,
@@ -77,6 +76,7 @@ class ReceiptListItem extends StatelessWidget {
                     Expanded(
                       child: Column(
                         crossAxisAlignment: CrossAxisAlignment.start,
+                        mainAxisSize: MainAxisSize.min,
                         children: [
                           Text(
                             data.merchant,
@@ -84,15 +84,18 @@ class ReceiptListItem extends StatelessWidget {
                             overflow: TextOverflow.ellipsis,
                             style: GoogleFonts.inter(
                               color: AppColors.onSurface,
-                              fontSize: 16,
+                              fontSize: 15,
                               fontWeight: FontWeight.bold,
                             ),
                           ),
-                          const SizedBox(height: 2),
+                          const SizedBox(height: 3),
                           Text(
                             data.date,
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
                             style: textTheme.codeSm.copyWith(
                               color: AppColors.onSurfaceVariant.withValues(alpha: 0.7),
+                              fontSize: 12,
                             ),
                           ),
                         ],
@@ -101,33 +104,40 @@ class ReceiptListItem extends StatelessWidget {
                   ],
                 ),
               ),
+              const SizedBox(width: 12),
               
               // Right: Amount + category chip
               Column(
                 crossAxisAlignment: CrossAxisAlignment.end,
+                mainAxisSize: MainAxisSize.min,
                 children: [
-                  Text(
-                    formattedText,
-                    style: GoogleFonts.inter(
-                      color: AppColors.onSurface,
-                      fontSize: 16,
-                      fontWeight: FontWeight.bold,
+                  FittedBox(
+                    fit: BoxFit.scaleDown,
+                    alignment: Alignment.centerRight,
+                    child: Text(
+                      formattedText,
+                      style: GoogleFonts.inter(
+                        color: AppColors.onSurface,
+                        fontSize: 15,
+                        fontWeight: FontWeight.bold,
+                      ),
                     ),
                   ),
                   const SizedBox(height: 4),
-                  // Small category badge
+                  // Category badge
                   Container(
-                    padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
+                    padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
                     decoration: BoxDecoration(
-                      color: AppColors.surfaceVariant,
+                      color: AppColors.surfaceVariant.withValues(alpha: 0.5),
                       borderRadius: AppRadius.full,
+                      border: Border.all(color: Colors.white.withValues(alpha: 0.06)),
                     ),
                     child: Text(
                       data.category.toUpperCase(),
                       style: GoogleFonts.inter(
-                        color: AppColors.onSurfaceVariant,
-                        fontSize: 9,
-                        fontWeight: FontWeight.bold,
+                        color: AppColors.primary,
+                        fontSize: 9.5,
+                        fontWeight: FontWeight.w700,
                         letterSpacing: 0.5,
                       ),
                     ),
